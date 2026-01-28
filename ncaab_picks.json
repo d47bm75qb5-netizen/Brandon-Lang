@@ -1,0 +1,6 @@
+{
+    "date": "2026-01-28",
+    "analysis": "Error: API Error: {'message': 'API key is missing', 'error_code': 'MISSING_KEY', 'details_url': 'https://the-odds-api.com/liveapi/guides/v4/api-error-codes.html#missing-key'}",
+    "lock": "N/A",
+    "value": "N/A"
+}
