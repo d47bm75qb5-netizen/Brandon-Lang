@@ -3,80 +3,44 @@ import json
 import requests
 import pandas as pd
 import google.generativeai as genai
-from datetime import datetime, timedelta, timezone
-import dateutil.parser
+from datetime import datetime, timezone, timedelta
+from nba_api.stats.endpoints import leaguedashteamstats
 
-# --- CONFIGURATION (SECRETS) ---
+# --- CONFIGURATION ---
 GEMINI_API_KEY = os.environ.get("GOOGLE_API_KEY")
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
-OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# --- WEATHER COORDINATES (NFL ONLY) ---
-STADIUM_COORDS = {
-    "Bills": {"lat": 42.7738, "lon": -78.7870}, "Chiefs": {"lat": 39.0489, "lon": -94.4839},
-    "Packers": {"lat": 44.5013, "lon": -88.0622}, "Bears": {"lat": 41.8623, "lon": -87.6167},
-    "Patriots": {"lat": 42.0909, "lon": -71.2643}, "Browns": {"lat": 41.5061, "lon": -81.6995},
-    "Broncos": {"lat": 39.7439, "lon": -105.0201}, "Steelers": {"lat": 40.4468, "lon": -80.0158},
-    "Eagles": {"lat": 39.9008, "lon": -75.1675}, "Seahawks": {"lat": 47.5952, "lon": -122.3316},
-    "Giants": {"lat": 40.8128, "lon": -74.0742}, "Jets": {"lat": 40.8128, "lon": -74.0742},
-    "Ravens": {"lat": 39.2780, "lon": -76.6227}, "Bengals": {"lat": 39.0955, "lon": -84.5161},
-    "Titans": {"lat": 36.1665, "lon": -86.7713}, "Commanders": {"lat": 38.9076, "lon": -76.8645}
-}
-
-def get_game_weather(team_name, sport_key):
-    if 'nba' in sport_key: return None
-    coords = next((v for k, v in STADIUM_COORDS.items() if k in team_name), None)
-    if not coords: return "N/A (Indoors)"
-    
-    url = f"https://api.openweathermap.org/data/2.5/weather?lat={coords['lat']}&lon={coords['lon']}&appid={OPENWEATHER_API_KEY}&units=imperial"
+# --- 1. GET NBA STATS (The Fuel) ---
+def get_nba_stats():
     try:
-        r = requests.get(url).json()
-        return f"{r['weather'][0]['description'].title()} | 🌡️ {r['main']['temp']}°F | 💨 {r['wind']['speed']} mph"
-    except: return "Weather Offline"
+        # Get latest advanced stats for all teams
+        stats = leaguedashteamstats.LeagueDashTeamStats(measure_type_detailed_defense='Base').get_data_frames()[0]
+        
+        # Keep only the important columns for betting
+        df = stats[['TEAM_NAME', 'W_PCT', 'OFF_RATING', 'DEF_RATING', 'NET_RATING', 'PACE']]
+        
+        # Convert to a readable string for the AI
+        return df.to_string(index=False)
+    except Exception as e:
+        return f"Error fetching NBA stats: {e}"
 
-# --- STATS FETCHING ---
-def fetch_nba_stats():
-    try:
-        from nba_api.stats.endpoints import leaguedashteamstats
-        return leaguedashteamstats.LeagueDashTeamStats(season='2025-26', measure_type_detailed_defense='Advanced').get_data_frames()[0]
-    except: return pd.DataFrame()
-
-def get_nba_metrics(team_name):
-    stats = fetch_nba_stats()
-    if stats.empty: return "Metrics: N/A"
-    match = stats[stats['TEAM_NAME'].str.contains(team_name, case=False)]
-    if not match.empty:
-        return f"NetRtg: {match['NET_RATING'].values[0]} | Pace: {match['PACE'].values[0]}"
-    return "Metrics: N/A"
-
-def get_nfl_advanced_stats(team_name):
-    try:
-        import nfl_data_py as nfl
-        df = nfl.import_pbp_data([2024], columns=['posteam', 'epa']) 
-        mapping = {'Patriots':'NE', 'Chiefs':'KC', 'Bills':'BUF', 'Cowboys':'DAL', 'Eagles':'PHI'}
-        code = mapping.get(team_name.split()[-1], 'NE')
-        return f"EPA/Play: {df[df['posteam'] == code]['epa'].mean():.3f}"
-    except: return "Adv Stats: N/A"
-
-# --- CORE ODDS & AI LOGIC ---
-def get_live_odds(sport_key):
-    # Determine date (Today in US Central Time)
-    target_date = datetime.now(timezone(timedelta(hours=-5))).date()
+# --- 2. GET LIVE ODDS (The Market) ---
+def get_live_odds():
+    # 1. API Setup
+    # Adjust to CST (UTC-6)
+    today = datetime.now(timezone(timedelta(hours=-6))).date()
     
-    url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/odds'
+    # URL for NBA Odds
+    url = 'https://api.the-odds-api.com/v4/sports/basketball_nba/odds'
     
-    # Request ALL market types: Spreads, Moneylines (h2h), Totals, and Player Props
-    markets = 'h2h,spreads,totals,player_points,player_rebounds,player_assists'
-    if 'nfl' in sport_key:
-        markets += ',player_pass_yds,player_rush_yds'
-
+    # --- THE FIX IS HERE: REMOVED PLAYER PROPS ---
     params = {
         'apiKey': ODDS_API_KEY, 
         'regions': 'us', 
-        'markets': markets, 
+        'markets': 'h2h,spreads,totals',  # Only requesting standard lines now
         'oddsFormat': 'american'
     }
     
@@ -84,109 +48,120 @@ def get_live_odds(sport_key):
         response = requests.get(url, params=params)
         data = response.json()
         
+        # Check for error messages from the API
+        if isinstance(data, dict) and 'message' in data:
+            return None, f"Odds API Error: {data['message']}"
+            
         if not isinstance(data, list):
-            return None, f"API Error: {data}"
+            return None, f"API returned unexpected format: {data}"
 
-        games = [g for g in data if dateutil.parser.isoparse(g['commence_time']).astimezone(timezone(timedelta(hours=-5))).date() == target_date]
+        # Filter for games happening TODAY
+        games = []
+        for g in data:
+            game_time = datetime.fromisoformat(g['commence_time'].replace('Z', '+00:00'))
+            if game_time.astimezone(timezone(timedelta(hours=-6))).date() == today:
+                games.append(g)
         
-        if not games: return None, "No games found for today."
+        if not games: 
+            return None, "No NBA games found for today."
         
+        # Format the odds for the AI
         results = []
         for g in games:
-            h, a = g['home_team'], g['away_team']
-            weather = get_game_weather(h, sport_key)
-            stats_h = get_nba_metrics(h) if 'nba' in sport_key else get_nfl_advanced_stats(h)
-            stats_a = get_nba_metrics(a) if 'nba' in sport_key else get_nfl_advanced_stats(a)
+            home = g['home_team']
+            away = g['away_team']
+            bookmakers = g['bookmakers']
             
-            # Dump the first bookmaker's odds for all requested markets
-            results.append(f"MATCHUP: {a} @ {h}\nWEATHER: {weather if weather else 'N/A'}\nSTATS: {a}({stats_h}) | {h}({stats_a})\nMARKETS: {json.dumps(g['bookmakers'][:1])}")
+            # Get the first bookmaker's odds (usually DraftKings or FanDuel)
+            if bookmakers:
+                odds = json.dumps(bookmakers[0]['markets'])
+                results.append(f"MATCHUP: {away} @ {home}\nODDS: {odds}")
+            else:
+                results.append(f"MATCHUP: {away} @ {home}\nODDS: No odds available yet.")
+            
         return "\n\n".join(results), None
-    except Exception as e: return None, str(e)
+        
+    except Exception as e: 
+        return None, str(e)
 
-def parse_brandon_lang_response(text):
-    lock = "See Analysis"
-    value = "See Analysis"
-    
+def parse_response(text):
+    lock, value = "See Analysis", "See Analysis"
     try:
         if "LOCK OF THE DAY" in text:
             parts = text.split("LOCK OF THE DAY")[1].split("VALUE PLAY")[0]
             for line in parts.split("\n"):
-                if "Pick:" in line:
-                    lock = line.replace("Pick:", "").strip()
-                    break
-        
+                if "Pick:" in line: lock = line.replace("Pick:", "").strip(); break
         if "VALUE PLAY" in text:
             parts = text.split("VALUE PLAY")[1]
             for line in parts.split("\n"):
-                if "Pick:" in line:
-                    value = line.replace("Pick:", "").strip()
-                    break
-    except:
-        pass
-    
+                if "Pick:" in line: value = line.replace("Pick:", "").strip(); break
+    except: pass
     return lock, value
 
-def generate_daily_content():
-    sport = "basketball_nba" 
+# --- 3. THE BRAIN (Gemini AI) ---
+def generate_nba_content():
+    # Fetch Data
+    stats_text = get_nba_stats()
+    odds_text, error = get_live_odds()
     
-    games_text, error = get_live_odds(sport)
-    
-    if error or not games_text:
-        return {
-            "date": str(datetime.now().date()),
-            "analysis": f"Error fetching data: {error}",
-            "lock_of_the_day": "N/A",
-            "value_play": "N/A"
-        }
+    if error or not odds_text:
+        return {"date": str(datetime.now().date()), "analysis": f"Error: {error}", "lock": "N/A", "value": "N/A"}
 
-    # CALL GEMINI
+    # FAIL SAFE FOR MISSING KEY
+    if not GEMINI_API_KEY:
+        return {"date": str(datetime.now().date()), "analysis": "Error: GOOGLE_API_KEY not found in Secrets.", "lock": "Error", "value": "Error"}
+
     model = genai.GenerativeModel('gemini-2.5-flash')
     
-    # --- UPDATED PROMPT: PROBABILITY-DRIVEN LOGIC ---
     prompt = f"""
-    You are the Brandon Lang Super-Agent. Your goal is purely mathematical: Maximize the Probability of Winning.
+    You are Brandon Lang, the world's best sports handicapper.
+    
+    I have provided:
+    1. The latest NBA Team Stats (Net Rating, Pace, etc.)
+    2. The Live Betting Odds for today's games.
     
     INSTRUCTIONS:
-    1. Scan ALL provided market data for every game: Spreads, Moneylines, Totals (Over/Under), AND Player Props.
-    2. Assign an estimated "Win Probability" (%) to every potential bet based on the Advanced Stats (NetRtg, EPA, Pace) and Weather provided.
-    3. Compare the probabilities across ALL categories. A Player Prop can beat a Spread if the probability is higher.
-    
-    SELECTION CRITERIA:
-    - **LOCK OF THE DAY**: The single bet with the absolute highest calculated Win Probability on the entire board. (Must be >65% confidence).
-    - **VALUE PLAY**: A bet with a high Win Probability relative to its odds (e.g., an Underdog or Prop with >55% chance but positive return).
+    - Analyze the matchups. Look for teams with a high Net Rating playing teams with a low Net Rating.
+    - Find "Market Inefficiencies" (e.g. a strong team is only a small favorite).
+    - Ignore "public biases" and trust the math.
     
     OUTPUT FORMAT:
-    
     1. 🔒 LOCK OF THE DAY
-       - Pick: [Target] [Line] (e.g., "Lakers -5", "LeBron Over 25.5 Pts", "Chiefs Moneyline")
-       - Type: [Spread / Moneyline / Total / Prop]
-       - Win Probability: [XX.X]%
-       - The Math: (Explain the statistical mismatch that guarantees this edge).
+       - Pick: [Team] [Spread/Moneyline]
+       - Confidence: [High/Medium]
+       - The Math: (Explain why the stats support this).
 
     2. 🐕 VALUE PLAY
-       - Pick: [Target] [Line]
-       - Type: [Spread / Moneyline / Total / Prop]
-       - Win Probability: [XX.X]%
-       - Breakdown: (Why is this line wrong based on the data?).
+       - Pick: [Team]
+       - Why: (Why is the underdog live?)
 
     Data:
-    {games_text}
+    --- TEAM STATS ---
+    {stats_text}
+    
+    --- TODAY'S ODDS ---
+    {odds_text}
     """
     
-    analysis = model.generate_content(prompt).text
-    lock, value = parse_brandon_lang_response(analysis)
+    try:
+        analysis = model.generate_content(prompt).text
+        lock, value = parse_response(analysis)
 
-    return {
-        "date": str(datetime.now().date()),
-        "analysis": analysis,
-        "lock_of_the_day": lock,
-        "value_play": value
-    }
+        return {
+            "date": str(datetime.now().date()),
+            "analysis": analysis,
+            "lock": lock,
+            "value": value
+        }
+    except Exception as e:
+        return {"date": str(datetime.now().date()), "analysis": f"AI Error: {e}", "lock": "Error", "value": "Error"}
 
 if __name__ == "__main__":
-    print("Starting Brandon Lang Auto-Analysis...")
-    data = generate_daily_content()
+    print("Starting NBA Analysis...")
+    data = generate_nba_content()
     
+    # Save to the JSON file
     with open("picks.json", "w") as f:
         json.dump(data, f, indent=4)
-    print("Success! Picks saved.")
+        
+    print("Success! NBA Picks saved to picks.json")
