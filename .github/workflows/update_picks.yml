@@ -2,10 +2,9 @@ name: Update Daily Picks
 
 on:
   schedule:
-    # 18:00 UTC = 12:00 PM Central Standard Time
-    # 23:00 UTC = 5:00 PM Central Standard Time
+    # Runs at 12:00 PM CST (18:00 UTC) and 5:00 PM CST (23:00 UTC)
     - cron: '0 18,23 * * *'
-  workflow_dispatch: # Allows you to run it manually to test
+  workflow_dispatch: # Allows manual trigger for testing
 
 permissions:
   contents: write # REQUIRED: Allows the robot to save the JSON file back to your repo
@@ -23,19 +22,14 @@ jobs:
           python-version: '3.9'
 
       - name: Install Libraries
-        # Add 'requests' if your odds logic needs it
-        run: pip install google-generativeai requests pandas
+        # --- THIS IS THE KEY STEP YOU ASKED ABOUT ---
+        run: pip install google-generativeai requests pandas nba_api nfl_data_py
 
       - name: Run Pick Generator Script
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-        run: python daily_picks.py
-
-      - name: Commit and Push Changes
-        run: |
-          git config --global user.name 'GitHub Action'
-          git config --global user.email 'action@github.com'
-          git add picks.json
-          # The part below commits the file ONLY if it has changed
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update daily picks" && git push)
+          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+        # Note: Your screenshot shows "daily.picks.py" (with a dot). 
+        # Make sure this filename matches exactly what is in your repo!
+        run: python daily.picks.pyf
