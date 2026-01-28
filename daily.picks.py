@@ -3,8 +3,8 @@ import json
 import requests
 import pandas as pd
 import google.generativeai as genai
+import re # Added for better text parsing
 from datetime import datetime, timezone, timedelta
-from nba_api.stats.endpoints import leaguedashteamstats
 
 # --- CONFIGURATION ---
 GEMINI_API_KEY = os.environ.get("GOOGLE_API_KEY")
@@ -13,34 +13,77 @@ ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# --- 1. GET NBA STATS (The Fuel) ---
+# --- 1. GET NBA STATS (The Fixed Version) ---
 def get_nba_stats():
+    """
+    Fetches NBA stats using direct requests with headers to avoid timeouts/blocking.
+    """
     try:
-        # Get latest advanced stats for all teams
-        stats = leaguedashteamstats.LeagueDashTeamStats(measure_type_detailed_defense='Base').get_data_frames()[0]
+        # 1. Define the headers to look like a real browser (Critical for NBA.com)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Referer': 'https://www.nba.com/',
+            'Origin': 'https://www.nba.com',
+            'Accept-Language': 'en-US,en;q=0.9',
+        }
+
+        # 2. NBA Stats API Endpoint (LeagueDashTeamStats)
+        url = "https://stats.nba.com/stats/leaguedashteamstats"
+        params = {
+            'MeasureType': 'Base',
+            'PerMode': 'PerGame',
+            'LeagueID': '00',
+            'Season': '2024-25', # Auto-update this in future seasons
+            'SeasonType': 'Regular Season',
+            'PlusMinus': 'N',
+            'PaceAdjust': 'N',
+            'Rank': 'N',
+            'Outcome': '',
+            'Location': '',
+            'Month': '0',
+            'SeasonSegment': '',
+            'DateFrom': '',
+            'DateTo': '',
+            'OpponentTeamID': '0',
+            'VsConference': '',
+            'VsDivision': '',
+            'TeamID': '0',
+            'Conference': '',
+            'Division': '',
+            'GameSegment': '',
+            'Period': '0',
+            'ShotClockRange': '',
+            'LastNGames': '0'
+        }
+
+        response = requests.get(url, headers=headers, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        
+        # 3. Parse the complicated JSON result
+        headers_list = data['resultSets'][0]['headers']
+        row_set = data['resultSets'][0]['rowSet']
+        
+        df = pd.DataFrame(row_set, columns=headers_list)
         
         # Keep only the important columns for betting
-        df = stats[['TEAM_NAME', 'W_PCT', 'OFF_RATING', 'DEF_RATING', 'NET_RATING', 'PACE']]
+        df = df[['TEAM_NAME', 'W_PCT', 'OFF_RATING', 'DEF_RATING', 'NET_RATING', 'PACE']]
         
-        # Convert to a readable string for the AI
         return df.to_string(index=False)
+
     except Exception as e:
         return f"Error fetching NBA stats: {e}"
 
 # --- 2. GET LIVE ODDS (The Market) ---
 def get_live_odds():
-    # 1. API Setup
     # Adjust to CST (UTC-6)
     today = datetime.now(timezone(timedelta(hours=-6))).date()
-    
-    # URL for NBA Odds
     url = 'https://api.the-odds-api.com/v4/sports/basketball_nba/odds'
     
-    # --- THE FIX IS HERE: REMOVED PLAYER PROPS ---
     params = {
         'apiKey': ODDS_API_KEY, 
         'regions': 'us', 
-        'markets': 'h2h,spreads,totals',  # Only requesting standard lines now
+        'markets': 'h2h,spreads,totals', 
         'oddsFormat': 'american'
     }
     
@@ -48,14 +91,12 @@ def get_live_odds():
         response = requests.get(url, params=params)
         data = response.json()
         
-        # Check for error messages from the API
         if isinstance(data, dict) and 'message' in data:
             return None, f"Odds API Error: {data['message']}"
             
         if not isinstance(data, list):
-            return None, f"API returned unexpected format: {data}"
+            return None, f"API Error: {data}"
 
-        # Filter for games happening TODAY
         games = []
         for g in data:
             game_time = datetime.fromisoformat(g['commence_time'].replace('Z', '+00:00'))
@@ -65,14 +106,12 @@ def get_live_odds():
         if not games: 
             return None, "No NBA games found for today."
         
-        # Format the odds for the AI
         results = []
         for g in games:
             home = g['home_team']
             away = g['away_team']
             bookmakers = g['bookmakers']
             
-            # Get the first bookmaker's odds (usually DraftKings or FanDuel)
             if bookmakers:
                 odds = json.dumps(bookmakers[0]['markets'])
                 results.append(f"MATCHUP: {away} @ {home}\nODDS: {odds}")
@@ -84,32 +123,58 @@ def get_live_odds():
     except Exception as e: 
         return None, str(e)
 
+# --- 3. PARSER (The Fixed Version) ---
+def clean_pick_text(text):
+    """Removes markdown formatting like ** or * from the pick."""
+    if not text: return "See Analysis"
+    # Remove asterisks, underscores, and leading/trailing spaces
+    return text.replace("*", "").replace("_", "").strip()
+
 def parse_response(text):
     lock, value = "See Analysis", "See Analysis"
     try:
+        # Split into two main sections
         if "LOCK OF THE DAY" in text:
-            parts = text.split("LOCK OF THE DAY")[1].split("VALUE PLAY")[0]
-            for line in parts.split("\n"):
-                if "Pick:" in line: lock = line.replace("Pick:", "").strip(); break
-        if "VALUE PLAY" in text:
-            parts = text.split("VALUE PLAY")[1]
-            for line in parts.split("\n"):
-                if "Pick:" in line: value = line.replace("Pick:", "").strip(); break
-    except: pass
+            parts = text.split("LOCK OF THE DAY")[1]
+            
+            # If VALUE PLAY exists, split by it to isolate the Lock
+            if "VALUE PLAY" in parts:
+                lock_section = parts.split("VALUE PLAY")[0]
+                value_section = parts.split("VALUE PLAY")[1]
+            else:
+                lock_section = parts
+                value_section = ""
+
+            # Extract LOCK
+            for line in lock_section.split("\n"):
+                if "Pick:" in line:
+                    raw_pick = line.split("Pick:")[1]
+                    lock = clean_pick_text(raw_pick)
+                    break
+            
+            # Extract VALUE
+            if value_section:
+                for line in value_section.split("\n"):
+                    if "Pick:" in line:
+                        raw_pick = line.split("Pick:")[1]
+                        value = clean_pick_text(raw_pick)
+                        break
+                        
+    except Exception as e:
+        print(f"Parsing Error: {e}")
+        
     return lock, value
 
-# --- 3. THE BRAIN (Gemini AI) ---
+# --- 4. THE BRAIN (Gemini AI) ---
 def generate_nba_content():
-    # Fetch Data
     stats_text = get_nba_stats()
     odds_text, error = get_live_odds()
     
     if error or not odds_text:
         return {"date": str(datetime.now().date()), "analysis": f"Error: {error}", "lock": "N/A", "value": "N/A"}
 
-    # FAIL SAFE FOR MISSING KEY
     if not GEMINI_API_KEY:
-        return {"date": str(datetime.now().date()), "analysis": "Error: GOOGLE_API_KEY not found in Secrets.", "lock": "Error", "value": "Error"}
+        return {"date": str(datetime.now().date()), "analysis": "Error: GOOGLE_API_KEY not found.", "lock": "Error", "value": "Error"}
 
     model = genai.GenerativeModel('gemini-2.5-flash')
     
@@ -122,10 +187,9 @@ def generate_nba_content():
     
     INSTRUCTIONS:
     - Analyze the matchups. Look for teams with a high Net Rating playing teams with a low Net Rating.
-    - Find "Market Inefficiencies" (e.g. a strong team is only a small favorite).
-    - Ignore "public biases" and trust the math.
+    - Find "Market Inefficiencies".
     
-    OUTPUT FORMAT:
+    OUTPUT FORMAT (STRICT):
     1. 🔒 LOCK OF THE DAY
        - Pick: [Team] [Spread/Moneyline]
        - Confidence: [High/Medium]
@@ -159,9 +223,6 @@ def generate_nba_content():
 if __name__ == "__main__":
     print("Starting NBA Analysis...")
     data = generate_nba_content()
-    
-    # Save to the JSON file
     with open("picks.json", "w") as f:
         json.dump(data, f, indent=4)
-        
-    print("Success! NBA Picks saved to picks.json")
+    print("Success! NBA Picks saved.")
