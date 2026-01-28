@@ -19,13 +19,19 @@ def get_barttorvik_stats():
     Returns a dictionary keyed by Team Name.
     """
     try:
-        # Get data for the current season (2026 based on your context, using 2025/2026 logic)
-        # Using 2024 as default for structure, but ideally this matches current year
+        # Get data for the current season
         current_year = datetime.now().year
-        if datetime.now().month > 4: current_year += 1 # Season flip logic
+        if datetime.now().month > 4: 
+            current_year += 1 # Season flip logic
         
         url = f"https://barttorvik.com/{current_year}_team_results.json"
-        response = requests.get(url, timeout=10)
+        
+        # ADDED HEADERS TO FIX THE "EXPECTING VALUE" ERROR
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
         data = response.json()
         
         stats_dict = {}
@@ -47,6 +53,8 @@ def find_team_stats(team_name, stats_dict):
     Simple fuzzy matcher to connect Odds API names to Barttorvik names.
     e.g. "Purdue Boilermakers" -> "Purdue"
     """
+    if not stats_dict: return None
+    
     # 1. Direct match
     if team_name in stats_dict: return stats_dict[team_name]
     
@@ -79,7 +87,12 @@ def get_live_odds():
         response = requests.get(url, params=params)
         data = response.json()
         
-        if not isinstance(data, list): return None, f"API Error: {data}"
+        # Check for API Error Message
+        if isinstance(data, dict) and 'message' in data:
+            return None, f"Odds API Error: {data['message']}"
+            
+        if not isinstance(data, list):
+            return None, f"API Error: {data}"
 
         games = [g for g in data if dateutil.parser.isoparse(g['commence_time']).astimezone(timezone(timedelta(hours=-6))).date() == target_date]
         
@@ -125,47 +138,5 @@ def generate_ncaab_content():
     if error or not games_text:
         return {"date": str(datetime.now().date()), "analysis": f"Error: {error}", "lock": "N/A", "value": "N/A"}
 
-    model = genai.GenerativeModel('gemini-2.5-flash')
-    
-    prompt = f"""
-    You are the Brandon Lang of College Basketball (NCAAB).
-    
-    I have provided you with the betting lines AND the "Barttorvik" Advanced Stats for each team.
-    - **AdjO**: Adjusted Offensive Efficiency (Points scored per 100 possessions).
-    - **AdjD**: Adjusted Defensive Efficiency (Points allowed per 100 possessions).
-    
-    INSTRUCTIONS:
-    1. Compare the Efficiency Margins. If Team A has a significantly better AdjO than Team B's AdjD, they have a massive edge.
-    2. Look for "Trap Lines" where the Efficiency stats suggest a team is much better than the spread indicates.
-    3. Calculate a Win Probability based on these efficiency metrics.
-    
-    OUTPUT FORMAT:
-    1. 🔒 LOCK OF THE DAY
-       - Pick: [Team/Total] [Line]
-       - Win Probability: [XX.X]%
-       - The Math: (Use the AdjO/AdjD numbers to explain why this mismatch exists).
-
-    2. 🐕 VALUE PLAY
-       - Pick: [Team/Total]
-       - Breakdown: (Why is the market wrong about this team's efficiency?)
-
-    Data:
-    {games_text}
-    """
-    
-    analysis = model.generate_content(prompt).text
-    lock, value = parse_response(analysis)
-
-    return {
-        "date": str(datetime.now().date()),
-        "analysis": analysis,
-        "lock": lock,
-        "value": value
-    }
-
-if __name__ == "__main__":
-    print("Starting NCAAB Analysis...")
-    data = generate_ncaab_content()
-    with open("ncaab_picks.json", "w") as f:
-        json.dump(data, f, indent=4)
-    print("Success! NCAAB Picks saved.")
+    # FAIL SAFE FOR MISSING KEY
+    if not
