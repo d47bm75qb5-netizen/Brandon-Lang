@@ -22,7 +22,6 @@ jobs:
           python-version: '3.9'
 
       - name: Install Libraries
-        # --- THIS IS THE KEY STEP YOU ASKED ABOUT ---
         run: pip install google-generativeai requests pandas nba_api nfl_data_py
 
       - name: Run Pick Generator Script
@@ -30,6 +29,14 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
-        # Note: Your screenshot shows "daily.picks.py" (with a dot). 
-        # Make sure this filename matches exactly what is in your repo!
         run: python daily.picks.py
+
+      # --- THIS IS THE NEW PART YOU WERE MISSING ---
+      - name: Commit and Push
+        run: |
+          git config --global user.email 'bot@github.com'
+          git config --global user.name 'NBA Bot'
+          # We add picks.json because that is what daily.picks.py creates
+          git add picks.json
+          # This command only commits if there are changes (prevents errors if data is same)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update NBA Picks" && git push)
