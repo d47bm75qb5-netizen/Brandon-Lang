@@ -1,0 +1,41 @@
+name: Update Daily Picks
+
+on:
+  schedule:
+    # 18:00 UTC = 12:00 PM Central Standard Time
+    # 23:00 UTC = 5:00 PM Central Standard Time
+    - cron: '0 18,23 * * *'
+  workflow_dispatch: # Allows you to run it manually to test
+
+permissions:
+  contents: write # REQUIRED: Allows the robot to save the JSON file back to your repo
+
+jobs:
+  generate-and-save:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Libraries
+        # Add 'requests' if your odds logic needs it
+        run: pip install google-generativeai requests pandas
+
+      - name: Run Pick Generator Script
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: python daily_picks.py
+
+      - name: Commit and Push Changes
+        run: |
+          git config --global user.name 'GitHub Action'
+          git config --global user.email 'action@github.com'
+          git add picks.json
+          # The part below commits the file ONLY if it has changed
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update daily picks" && git push)
