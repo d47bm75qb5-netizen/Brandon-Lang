@@ -8,8 +8,8 @@ from datetime import datetime, timedelta, timezone
 import dateutil.parser
 
 # --- CONFIGURATION ---
-GEMINI_API_KEY = 'AIzaSyAwHrZ75XHclME7gEYUITCnk2e3iP8pFmA'
-ODDS_API_KEY = 'f13de74f7a9205f925ea56b90a5ec3d8'
+GEMINI_API_KEY = st.secrets["GOOGLE_API_KEY"]
+ODDS_API_KEY = st.secrets["ODDS_API_KEY"]
 OPENWEATHER_API_KEY = st.secrets["OPENWEATHER_API_KEY"]
 
 if GEMINI_API_KEY:
