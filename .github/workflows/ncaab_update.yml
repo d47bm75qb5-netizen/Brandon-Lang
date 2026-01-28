@@ -1,0 +1,31 @@
+name: Update NCAAB Picks
+
+on:
+  schedule:
+    # Runs at 11:00 AM CST (17:00 UTC) - College games often start early on weekends
+    - cron: '0 17 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run-ncaab:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - run: pip install google-generativeai requests
+      - name: Run Script
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: python ncaab_picks.py
+      - name: Commit
+        run: |
+          git config --global user.email 'bot@github.com'
+          git config --global user.name 'NCAAB Bot'
+          git add ncaab_picks.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update College Picks" && git push)
