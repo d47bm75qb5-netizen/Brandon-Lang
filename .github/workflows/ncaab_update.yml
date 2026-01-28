@@ -5,7 +5,7 @@ on:
     # Runs at 10:00 AM CST (16:00 UTC) and 5:00 PM CST (23:00 UTC)
     - cron: '0 16,23 * * *'
   workflow_dispatch:
-  
+
 permissions:
   contents: write
 
@@ -17,12 +17,16 @@ jobs:
       - uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-      - run: pip install google-generativeai requests
+      
+      # THIS IS THE FIXED LINE:
+      - run: pip install google-generativeai requests python-dateutil
+      
       - name: Run Script
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: python ncaab_picks.py
+        
       - name: Commit
         run: |
           git config --global user.email 'bot@github.com'
