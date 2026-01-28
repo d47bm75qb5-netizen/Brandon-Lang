@@ -63,14 +63,12 @@ def get_nfl_advanced_stats(team_name):
 
 # --- CORE ODDS & AI LOGIC ---
 def get_live_odds(sport_key):
+    # Determine date (Today in US Central Time)
     target_date = datetime.now(timezone(timedelta(hours=-5))).date()
     
     url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/odds'
     
-    # --- UPDATED MARKETS: Added player props ---
-    # Note: Depending on sport, some markets may not return data, which is fine.
-    # NBA Props: player_points, player_rebounds, player_assists
-    # NFL Props: player_pass_yds, player_rush_yds, player_receptions
+    # Request ALL market types: Spreads, Moneylines (h2h), Totals, and Player Props
     markets = 'h2h,spreads,totals,player_points,player_rebounds,player_assists'
     if 'nfl' in sport_key:
         markets += ',player_pass_yds,player_rush_yds'
@@ -100,7 +98,7 @@ def get_live_odds(sport_key):
             stats_h = get_nba_metrics(h) if 'nba' in sport_key else get_nfl_advanced_stats(h)
             stats_a = get_nba_metrics(a) if 'nba' in sport_key else get_nfl_advanced_stats(a)
             
-            # We limit to the first bookmaker to save tokens/space
+            # Dump the first bookmaker's odds for all requested markets
             results.append(f"MATCHUP: {a} @ {h}\nWEATHER: {weather if weather else 'N/A'}\nSTATS: {a}({stats_h}) | {h}({stats_a})\nMARKETS: {json.dumps(g['bookmakers'][:1])}")
         return "\n\n".join(results), None
     except Exception as e: return None, str(e)
@@ -108,6 +106,7 @@ def get_live_odds(sport_key):
 def parse_brandon_lang_response(text):
     lock = "See Analysis"
     value = "See Analysis"
+    
     try:
         if "LOCK OF THE DAY" in text:
             parts = text.split("LOCK OF THE DAY")[1].split("VALUE PLAY")[0]
@@ -124,6 +123,7 @@ def parse_brandon_lang_response(text):
                     break
     except:
         pass
+    
     return lock, value
 
 def generate_daily_content():
@@ -142,26 +142,32 @@ def generate_daily_content():
     # CALL GEMINI
     model = genai.GenerativeModel('gemini-2.5-flash')
     
-    # --- UPDATED PROMPT: Explicitly allows Player Props ---
+    # --- UPDATED PROMPT: PROBABILITY-DRIVEN LOGIC ---
     prompt = f"""
-    You are Brandon Lang. Analyze this data to find the ultimate betting edge.
+    You are the Brandon Lang Super-Agent. Your goal is purely mathematical: Maximize the Probability of Winning.
     
-    CRITICAL UPDATES:
-    - You must now consider **PLAYER PROPS** (e.g., "LeBron Over 25.5 Points") alongside Spreads, Moneylines, and Totals.
-    - If a specific Player Prop offers a better mathematical edge than a game line, **USE IT** as your Lock or Value play.
+    INSTRUCTIONS:
+    1. Scan ALL provided market data for every game: Spreads, Moneylines, Totals (Over/Under), AND Player Props.
+    2. Assign an estimated "Win Probability" (%) to every potential bet based on the Advanced Stats (NetRtg, EPA, Pace) and Weather provided.
+    3. Compare the probabilities across ALL categories. A Player Prop can beat a Spread if the probability is higher.
     
-    Structure:
+    SELECTION CRITERIA:
+    - **LOCK OF THE DAY**: The single bet with the absolute highest calculated Win Probability on the entire board. (Must be >65% confidence).
+    - **VALUE PLAY**: A bet with a high Win Probability relative to its odds (e.g., an Underdog or Prop with >55% chance but positive return).
+    
+    OUTPUT FORMAT:
+    
     1. 🔒 LOCK OF THE DAY
-       - Pick: [Team/Player Prop/Over-Under]
-       - Type: [SPREAD / PROP / TOTAL]
-       - Win Probability: [%]
-       - The Math: (Why is this the strongest play on the board?)
+       - Pick: [Target] [Line] (e.g., "Lakers -5", "LeBron Over 25.5 Pts", "Chiefs Moneyline")
+       - Type: [Spread / Moneyline / Total / Prop]
+       - Win Probability: [XX.X]%
+       - The Math: (Explain the statistical mismatch that guarantees this edge).
 
     2. 🐕 VALUE PLAY
-       - Pick: [Team/Player Prop/Over-Under]
-       - Type: [SPREAD / PROP / TOTAL]
-       - Win Probability: [%]
-       - Breakdown: (High-energy reasoning).
+       - Pick: [Target] [Line]
+       - Type: [Spread / Moneyline / Total / Prop]
+       - Win Probability: [XX.X]%
+       - Breakdown: (Why is this line wrong based on the data?).
 
     Data:
     {games_text}
