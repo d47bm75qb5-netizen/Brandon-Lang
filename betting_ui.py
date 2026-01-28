@@ -69,7 +69,15 @@ if os.path.exists(PICK_FILE):
     except json.JSONDecodeError:
         st.error("Error reading data.")
 else:
-    st.warning("⚠️ No picks available yet. Check back at 12:00 PM CST.")
+    # --- WAITING STATE ---
+    st.warning("⚠️ No picks available yet.")
+    st.markdown("""
+    **The Super-Agent runs automatically at:**
+    - 🕛 **12:00 PM CST**
+    - 🕔 **5:00 PM CST**
+    
+    *Check back after those times for the latest breakdown!*
+    """)
 
 # --- REFRESH BUTTON ---
 if st.button("🔄 Check for New Updates"):
