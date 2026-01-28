@@ -7,7 +7,6 @@ from datetime import datetime, timedelta, timezone
 import dateutil.parser
 
 # --- CONFIGURATION (SECRETS) ---
-# These pull from GitHub Actions Secrets
 GEMINI_API_KEY = os.environ.get("GOOGLE_API_KEY")
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
 OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
@@ -56,7 +55,6 @@ def get_nba_metrics(team_name):
 def get_nfl_advanced_stats(team_name):
     try:
         import nfl_data_py as nfl
-        # Note: Using 2024 since 2025 might not have data yet in some libraries, adjust as needed
         df = nfl.import_pbp_data([2024], columns=['posteam', 'epa']) 
         mapping = {'Patriots':'NE', 'Chiefs':'KC', 'Bills':'BUF', 'Cowboys':'DAL', 'Eagles':'PHI'}
         code = mapping.get(team_name.split()[-1], 'NE')
@@ -65,17 +63,29 @@ def get_nfl_advanced_stats(team_name):
 
 # --- CORE ODDS & AI LOGIC ---
 def get_live_odds(sport_key):
-    # Determine date (Today in US Central Time)
     target_date = datetime.now(timezone(timedelta(hours=-5))).date()
     
     url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/odds'
-    params = {'apiKey': ODDS_API_KEY, 'regions': 'us', 'markets': 'h2h,spreads,totals', 'oddsFormat': 'american'}
+    
+    # --- UPDATED MARKETS: Added player props ---
+    # Note: Depending on sport, some markets may not return data, which is fine.
+    # NBA Props: player_points, player_rebounds, player_assists
+    # NFL Props: player_pass_yds, player_rush_yds, player_receptions
+    markets = 'h2h,spreads,totals,player_points,player_rebounds,player_assists'
+    if 'nfl' in sport_key:
+        markets += ',player_pass_yds,player_rush_yds'
+
+    params = {
+        'apiKey': ODDS_API_KEY, 
+        'regions': 'us', 
+        'markets': markets, 
+        'oddsFormat': 'american'
+    }
     
     try:
         response = requests.get(url, params=params)
         data = response.json()
         
-        # Check for API errors or empty data
         if not isinstance(data, list):
             return None, f"API Error: {data}"
 
@@ -89,19 +99,17 @@ def get_live_odds(sport_key):
             weather = get_game_weather(h, sport_key)
             stats_h = get_nba_metrics(h) if 'nba' in sport_key else get_nfl_advanced_stats(h)
             stats_a = get_nba_metrics(a) if 'nba' in sport_key else get_nfl_advanced_stats(a)
-            results.append(f"MATCHUP: {a} @ {h}\nWEATHER: {weather if weather else 'N/A'}\nSTATS: {a}({stats_a}) | {h}({stats_h})\nMARKETS: {json.dumps(g['bookmakers'][:1])}")
+            
+            # We limit to the first bookmaker to save tokens/space
+            results.append(f"MATCHUP: {a} @ {h}\nWEATHER: {weather if weather else 'N/A'}\nSTATS: {a}({stats_h}) | {h}({stats_a})\nMARKETS: {json.dumps(g['bookmakers'][:1])}")
         return "\n\n".join(results), None
     except Exception as e: return None, str(e)
 
 def parse_brandon_lang_response(text):
-    # This helper tries to extract Lock and Value from the AI text for the JSON file
-    # It's a simple parser; the AI output can vary, so this is "best effort"
     lock = "See Analysis"
     value = "See Analysis"
-    
     try:
         if "LOCK OF THE DAY" in text:
-            # logic to grab the line after "Pick:"
             parts = text.split("LOCK OF THE DAY")[1].split("VALUE PLAY")[0]
             for line in parts.split("\n"):
                 if "Pick:" in line:
@@ -116,12 +124,9 @@ def parse_brandon_lang_response(text):
                     break
     except:
         pass
-    
     return lock, value
 
 def generate_daily_content():
-    # Logic to pick sport based on season or just default to NBA for now
-    # You could make this smarter (e.g., if month > 8 use NFL, else NBA)
     sport = "basketball_nba" 
     
     games_text, error = get_live_odds(sport)
@@ -136,23 +141,25 @@ def generate_daily_content():
 
     # CALL GEMINI
     model = genai.GenerativeModel('gemini-2.5-flash')
-    prompt = f"""
-    You are Brandon Lang. Use the data to find the ultimate edge.
     
-    CRITICAL: 
-    - You must now consider Over/Under (Totals) bets for your top picks.
-    - If the Pace (NBA) or EPA/Weather (NFL) suggests a high-scoring blowout or a defensive slog, recommend the Over or Under if it's the strongest play on the board.
+    # --- UPDATED PROMPT: Explicitly allows Player Props ---
+    prompt = f"""
+    You are Brandon Lang. Analyze this data to find the ultimate betting edge.
+    
+    CRITICAL UPDATES:
+    - You must now consider **PLAYER PROPS** (e.g., "LeBron Over 25.5 Points") alongside Spreads, Moneylines, and Totals.
+    - If a specific Player Prop offers a better mathematical edge than a game line, **USE IT** as your Lock or Value play.
     
     Structure:
     1. 🔒 LOCK OF THE DAY
-       - Pick: [Team/Over/Under]
-       - Type: [MONEY LINE, SPREAD, or OVER/UNDER]
+       - Pick: [Team/Player Prop/Over-Under]
+       - Type: [SPREAD / PROP / TOTAL]
        - Win Probability: [%]
-       - The Math: (Explain why this specific market is the superior tactical choice).
+       - The Math: (Why is this the strongest play on the board?)
 
     2. 🐕 VALUE PLAY
-       - Pick: [Team/Over/Under]
-       - Type: [MONEY LINE, SPREAD, or OVER/UNDER]
+       - Pick: [Team/Player Prop/Over-Under]
+       - Type: [SPREAD / PROP / TOTAL]
        - Win Probability: [%]
        - Breakdown: (High-energy reasoning).
 
