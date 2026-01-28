@@ -2,8 +2,8 @@ name: Update NCAAB Picks
 
 on:
   schedule:
-    # Runs at 10:00 AM CST (16:00 UTC)
-    - cron: '0 16 * * *'
+    # Runs at 10:00 AM CST (16:00 UTC) and 5:00 PM CST (23:00 UTC)
+    - cron: '0 16,23 * * *'
   workflow_dispatch:
   
 permissions:
