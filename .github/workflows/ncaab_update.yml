@@ -2,10 +2,10 @@ name: Update NCAAB Picks
 
 on:
   schedule:
-    # Runs at 11:00 AM CST (17:00 UTC) - College games often start early on weekends
-    - cron: '0 17 * * *'
+    # Runs at 10:00 AM CST (16:00 UTC)
+    - cron: '0 16 * * *'
   workflow_dispatch:
-
+  
 permissions:
   contents: write
 
