@@ -40,6 +40,8 @@ jobs:
         run: |
           git config --global user.email 'bot@github.com'
           git config --global user.name 'NCAAB Bot'
-          # UPGRADE 3: Save the history file too
           git add ncaab_picks.json ncaab_history.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update NCAAB Picks & History" && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update NCAAB Picks & History")
+          # --- NEW COMMAND: Get latest changes before pushing ---
+          git pull --rebase origin main
+          git push
