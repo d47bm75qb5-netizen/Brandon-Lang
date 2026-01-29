@@ -22,7 +22,7 @@ jobs:
           python-version: '3.9'
 
       - name: Install Libraries
-        run: pip install google-generativeai requests pandas nba_api nfl_data_py
+        run: pip install google-generativeai requests pandas nba_api lxml nfl_data_py
 
       - name: Run Pick Generator Script
         env:
