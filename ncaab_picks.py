@@ -13,45 +13,46 @@ ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# --- 1. GET NCAAB STATS (Sports Reference) ---
+# --- 1. GET NCAAB STATS (Source: TeamRankings) ---
 def get_ncaab_stats():
     """
-    Scrapes Sports-Reference.com for CBB Ratings (SRS).
-    SRS (Simple Rating System) is the best predictive metric for College.
+    Scrapes TeamRankings for 'Predictive Ratings'.
+    This is much more reliable for bots than Sports-Reference.
     """
     try:
-        # Fetch 2026 Stats (Matching your NBA Date)
-        url = "https://www.sports-reference.com/cbb/seasons/2026-ratings.html"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'}
+        # URL for Predictive Ratings (Best for betting)
+        url = "https://www.teamrankings.com/ncaa-basketball/ranking/predictive-by-other"
+        
+        # Headers to look like a real browser
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
         
         response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
         
         # Parse HTML Table
         dfs = pd.read_html(response.text)
         if not dfs: return "Error: No table found."
         df = dfs[0]
         
-        # Clean Data: CBB tables often repeat headers, so we remove those rows
-        df = df[df['School'] != 'School']
-        
-        # Select Columns: School and SRS (Simple Rating System)
-        # SRS is essentially "Point Differential adjusted for Strength of Schedule"
-        if 'SRS' in df.columns:
-            df = df[['School', 'SRS']]
+        # TeamRankings format: Rank, Team, Rating, ...
+        # We just want Team and Rating
+        if 'Team' in df.columns and 'Rating' in df.columns:
+            df = df[['Team', 'Rating']]
+            return df.to_string(index=False)
         else:
             return f"Stats Format Changed. Columns: {df.columns.tolist()}"
-        
-        return df.to_string(index=False)
+
     except Exception as e:
         return f"Error fetching stats: {e}"
 
-# --- 2. GET LIVE ODDS (NCAAB) ---
+# --- 2. GET LIVE ODDS (CST TIME) ---
 def get_live_odds():
     # FORCE US CENTRAL TIME (UTC-6)
     cst_now = datetime.now(timezone(timedelta(hours=-6)))
     today = cst_now.date()
     
-    # URL for College Basketball Odds
     url = 'https://api.the-odds-api.com/v4/sports/basketball_ncaab/odds'
     params = {'apiKey': ODDS_API_KEY, 'regions': 'us', 'markets': 'h2h,spreads,totals', 'oddsFormat': 'american'}
     
@@ -81,13 +82,11 @@ def get_live_odds():
         return "\n\n".join(results), None
     except Exception as e: return None, str(e)
 
-# --- 3. THE "FIND ALL" PARSER ---
+# --- 3. ROBUST PARSER ---
 def parse_response(text):
-    """
-    Scans the text for ALL occurrences of 'Pick:' regardless of layout.
-    """
     lock, value = "See Analysis", "See Analysis"
     try:
+        # Finds "Pick:" or "Bet:" and stops at newlines or keywords
         pattern = r"(?:Pick|Selection|Bet)\s*[:\-]\s*(.*?)(?:\s+(?:Win Probability|Confidence|Analysis)|\n|$)"
         matches = re.findall(pattern, text, re.IGNORECASE)
         
@@ -116,30 +115,30 @@ def generate_ncaab_content():
     You are Brandon Lang, expert College Basketball handicapper.
     
     Data:
-    --- TEAM SRS RATINGS (Simple Rating System) ---
-    (Higher SRS is better. SRS = Point Differential + Strength of Schedule)
+    --- TEAM PREDICTIVE RATINGS (TeamRankings) ---
+    (Higher Rating is better. Example: +15.0 is elite, +5.0 is average)
     {stats_text}
     
     --- TODAY'S ODDS ---
     {odds_text}
     
     INSTRUCTIONS:
-    1. Compare SRS Ratings. A team with an SRS of 15.0 is significantly better than a team with SRS 5.0.
-    2. LOCK OF THE DAY: Find the biggest mismatch between SRS and the Spread.
-    3. VALUE PLAY: Find a good underdog with a decent SRS.
-    4. WIN PROBABILITY: Calculate % chance of winning based on the SRS gap.
+    1. Compare Predictive Ratings. If Team A is Rated 15.0 and Team B is Rated 10.0, Team A should be a ~5 point favorite.
+    2. LOCK OF THE DAY: Find the biggest mismatch between the Rating Difference and the Vegas Spread.
+    3. VALUE PLAY: Find an underdog where the Rating gap is smaller than the points they are getting.
+    4. WIN PROBABILITY: Calculate % chance of winning based on the Ratings.
     
     STRICT OUTPUT FORMAT:
     1. LOCK OF THE DAY
     Pick: [Team Name] [Spread/Moneyline]
     Win Probability: [XX.X]%
     Confidence: [High/Medium]
-    Analysis: [Reasoning using SRS]
+    Analysis: [Reasoning using Ratings]
 
     2. VALUE PLAY
     Pick: [Team Name] [Spread/Moneyline]
     Win Probability: [XX.X]%
-    Analysis: [Reasoning using SRS]
+    Analysis: [Reasoning using Ratings]
     """
     
     try:
@@ -160,4 +159,4 @@ if __name__ == "__main__":
     data = generate_ncaab_content()
     with open("ncaab_picks.json", "w") as f:
         json.dump(data, f, indent=4)
-    print("Success! NCAAB Picks saved.")
+    print("Success! Picks saved.")
