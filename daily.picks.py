@@ -13,45 +13,33 @@ ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# --- 1. GET NBA STATS (Source: Basketball Reference) ---
+# --- 1. GET NBA STATS (Basketball Reference) ---
 def get_nba_stats():
-    """
-    Scrapes Basketball-Reference.com for 2026 Advanced Stats.
-    """
     try:
-        # 1. URL for the current season (2026 based on your date)
+        # Fetch 2026 Stats
         url = "https://www.basketball-reference.com/leagues/NBA_2026_ratings.html"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'}
         
-        # 2. Browser Headers (Crucial)
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-        }
-        
-        # 3. Fetch
         response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
-        
-        # 4. Parse Table
         dfs = pd.read_html(response.text)
         if not dfs: return "Error: No table found."
         df = dfs[0]
         
-        # 5. Clean Columns
-        # We look for Team, ORtg, DRtg, NRtg
         possible_cols = ['Team', 'ORtg', 'DRtg', 'NRtg']
         if set(possible_cols).issubset(df.columns):
             df = df[possible_cols]
-        else:
-            return f"Stats Format Changed. Columns found: {df.columns.tolist()}"
-
+        
         return df.to_string(index=False)
-
     except Exception as e:
         return f"Error fetching stats: {e}"
 
-# --- 2. GET LIVE ODDS ---
+# --- 2. GET LIVE ODDS (CST FIXED) ---
 def get_live_odds():
-    today = datetime.now(timezone(timedelta(hours=-6))).date()
+    # FORCE US CENTRAL TIME (UTC-6)
+    # This prevents the "Tomorrow" bug
+    cst_now = datetime.now(timezone(timedelta(hours=-6)))
+    today = cst_now.date()
+    
     url = 'https://api.the-odds-api.com/v4/sports/basketball_nba/odds'
     params = {'apiKey': ODDS_API_KEY, 'regions': 'us', 'markets': 'h2h,spreads,totals', 'oddsFormat': 'american'}
     
@@ -64,12 +52,16 @@ def get_live_odds():
         games = []
         for g in data:
             try:
+                # Convert Game Time to CST to match "Today"
                 game_time = datetime.fromisoformat(g['commence_time'].replace('Z', '+00:00'))
-                if game_time.astimezone(timezone(timedelta(hours=-6))).date() == today:
+                game_cst = game_time.astimezone(timezone(timedelta(hours=-6))).date()
+                
+                # Only keep games happening TODAY (CST)
+                if game_cst == today:
                     games.append(g)
             except: continue
         
-        if not games: return None, "No NBA games found for today."
+        if not games: return None, f"No NBA games found for {today}."
         
         results = []
         for g in games:
@@ -80,16 +72,16 @@ def get_live_odds():
         return "\n\n".join(results), None
     except Exception as e: return None, str(e)
 
-# --- 3. THE UPDATED PARSER (Handles Win Prob) ---
+# --- 3. THE PARSER (Includes Win Probability) ---
 def extract_pick(section_text):
     if not section_text: return "See Analysis"
     
-    # Updated Regex: Stops at "Win Probability", "Confidence", or "Analysis"
-    # This prevents the percentage from getting stuck in the Team Name
+    # Regex: Finds "Pick:", captures text, stops at "Win Probability", "Confidence" or newline
     match = re.search(r"(?:Pick|Selection|Bet)\s*[:\-]\s*(.*?)(?:\s+Win Probability|\s+Confidence|\s+Analysis|\n|$)", section_text, re.IGNORECASE)
     
     if match:
-        return match.group(1).strip().replace("*", "").replace("`", "")
+        clean = match.group(1).strip()
+        return clean.replace("*", "").replace("`", "")
     return "See Analysis"
 
 def parse_response(text):
@@ -105,13 +97,17 @@ def parse_response(text):
         print(f"Parsing Error: {e}")
     return lock, value
 
-# --- 4. THE BRAIN (Now asks for Win %) ---
+# --- 4. THE BRAIN ---
 def generate_nba_content():
+    # Use CST for the file date too
+    cst_now = datetime.now(timezone(timedelta(hours=-6)))
+    current_date = str(cst_now.date())
+
     stats_text = get_nba_stats()
     odds_text, error = get_live_odds()
     
     if error or not odds_text:
-        return {"date": str(datetime.now().date()), "analysis": f"Error: {error}", "lock": "N/A", "value": "N/A"}
+        return {"date": current_date, "analysis": f"Error: {error}", "lock": "N/A", "value": "N/A"}
 
     model = genai.GenerativeModel('gemini-2.5-flash')
     
@@ -127,21 +123,21 @@ def generate_nba_content():
     
     INSTRUCTIONS:
     1. Compare Net Ratings.
-    2. LOCK OF THE DAY: Find the biggest mismatch.
-    3. VALUE PLAY: Find the best underdog value.
-    4. WIN PROBABILITY: Estimate the % chance of winning based on the Net Rating gap.
+    2. LOCK OF THE DAY: Biggest mismatch.
+    3. VALUE PLAY: Best underdog.
+    4. WIN PROBABILITY: You MUST calculate a percentage chance of winning based on the Net Rating gap.
     
     STRICT OUTPUT FORMAT:
     1. LOCK OF THE DAY
     Pick: [Team Name] [Spread/Moneyline]
     Win Probability: [XX.X]%
     Confidence: [High/Medium]
-    Analysis: [Why?]
+    Analysis: [Reasoning]
 
     2. VALUE PLAY
     Pick: [Team Name] [Spread/Moneyline]
     Win Probability: [XX.X]%
-    Analysis: [Why?]
+    Analysis: [Reasoning]
     """
     
     try:
@@ -149,17 +145,17 @@ def generate_nba_content():
         lock, value = parse_response(analysis)
 
         return {
-            "date": str(datetime.now().date()),
+            "date": current_date,
             "analysis": analysis,
             "lock": lock,
             "value": value
         }
     except Exception as e:
-        return {"date": str(datetime.now().date()), "analysis": f"AI Error: {e}", "lock": "Error", "value": "Error"}
+        return {"date": current_date, "analysis": f"AI Error: {e}", "lock": "Error", "value": "Error"}
 
 if __name__ == "__main__":
     print("Starting Analysis...")
     data = generate_nba_content()
     with open("picks.json", "w") as f:
         json.dump(data, f, indent=4)
-    print("Success! Picks with Win Prob saved.")
+    print("Success! Picks saved.")
