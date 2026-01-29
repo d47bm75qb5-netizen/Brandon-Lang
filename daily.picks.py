@@ -13,49 +13,40 @@ ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# --- 1. GET NBA STATS (The New "Basketball-Reference" Version) ---
+# --- 1. GET NBA STATS (The "TeamRankings" Version) ---
 def get_nba_stats():
     """
-    Scrapes Basketball-Reference.com for Net Ratings.
-    This is much more reliable than the NBA.com API for bots.
+    Scrapes TeamRankings.com for Net Efficiency.
+    This source is lighter and less likely to block cloud bots.
     """
     try:
-        # 1. Determine the current season year dynamically
-        now = datetime.now()
-        # If we are in Oct/Nov/Dec of 2025, the season is "2026"
-        year = now.year + 1 if now.month > 9 else now.year
+        # 1. URL for Net Efficiency Stats
+        url = "https://www.teamrankings.com/nba/stat/net-efficiency"
         
-        # 2. URL for the "Ratings" page (has Net Rating, ORtg, DRtg)
-        url = f"https://www.basketball-reference.com/leagues/NBA_{year}_ratings.html"
-        
-        # 3. Headers to look like a real browser (Prevents 429 Errors)
+        # 2. Simple Headers
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
-        # 4. Fetch and Parse
+        # 3. Fetch
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         
-        # Pandas reads the HTML table automatically
+        # 4. Parse HTML Table
+        # (Pandas automatically finds the table)
         dfs = pd.read_html(response.text)
-        
-        # The ratings table is usually the first one found
         df = dfs[0]
         
-        # 5. Clean the Data
-        # We only want the main efficiency stats
-        # Column names on B-Ref: "Team", "ORtg", "DRtg", "NRtg"
-        if 'NRtg' in df.columns:
-            df = df[['Team', 'ORtg', 'DRtg', 'NRtg']]
-            # Rename for clarity for the AI
-            df.columns = ['Team', 'Off_Rtg', 'Def_Rtg', 'Net_Rtg']
-            return df.to_string(index=False)
-        else:
-            return "Error: Could not find Net Rating column in data."
+        # 5. Clean Data
+        # TeamRankings format: "Rank", "Team", "2024", "Last 3", etc.
+        # We just want "Team" and the current season rating (usually col index 2)
+        df = df.iloc[:, [1, 2]] # Select Team Name and Current Rating
+        df.columns = ['Team', 'Net_Rtg']
+        
+        return df.to_string(index=False)
 
     except Exception as e:
-        return f"Error fetching stats from B-Ref: {e}"
+        return f"Error fetching stats: {e}"
 
 # --- 2. GET LIVE ODDS ---
 def get_live_odds():
@@ -88,25 +79,27 @@ def get_live_odds():
         return "\n\n".join(results), None
     except Exception as e: return None, str(e)
 
-# --- 3. THE PARSER (Improved for "o Pick:") ---
+# --- 3. THE PARSER (Fixed for One-Line Outputs) ---
 def extract_pick(section_text):
     """
-    Finds the pick using Regex, handling bullets (o), stars (*), or dashes (-).
+    Improved Regex to handle cases where Confidence/Analysis is on the same line.
+    Example: "Pick: Wolves -9.0 Confidence: High..." -> Returns "Wolves -9.0"
     """
     if not section_text: return "See Analysis"
     
-    # Looks for "Pick" followed by punctuation, then captures the rest of the line
-    match = re.search(r"(?:Pick|Selection|Bet)\s*[:\-]\s*(.*)", section_text, re.IGNORECASE)
+    # Regex Explanation:
+    # 1. Look for "Pick:", "Selection:", or "Bet:"
+    # 2. Capture everything until we hit "Confidence", "Analysis", or a new line
+    match = re.search(r"(?:Pick|Selection|Bet)\s*[:\-]\s*(.*?)(?:\s+Confidence|\s+Analysis|\n|$)", section_text, re.IGNORECASE)
     
     if match:
         clean_text = match.group(1).strip()
-        # Remove markdown bolding (**) or italics (*)
         return clean_text.replace("*", "").replace("`", "")
     
     return "See Analysis"
 
 def parse_response(text):
-    lock, value = "Pending...", "Pending..."
+    lock, value = "See Analysis", "See Analysis"
     
     try:
         if "VALUE PLAY" in text:
@@ -160,11 +153,11 @@ def generate_nba_content():
     1. LOCK OF THE DAY
     Pick: [Team Name] [Spread/Moneyline]
     Confidence: [High/Medium]
-    Analysis: [Explain using the Net Rating numbers]
+    Analysis: [Your reasoning]
 
     2. VALUE PLAY
     Pick: [Team Name] [Spread/Moneyline]
-    Analysis: [Explain using the Net Rating numbers]
+    Analysis: [Your reasoning]
     """
     
     try:
