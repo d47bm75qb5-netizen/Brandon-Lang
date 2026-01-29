@@ -17,51 +17,37 @@ if GEMINI_API_KEY:
 def get_nba_stats():
     """
     Scrapes Basketball-Reference.com for 2026 Advanced Stats.
-    This is a static page, making it much more reliable than the API.
     """
     try:
-        # Based on your screenshot, it is Jan 2026, so we want the 2026 season data
+        # 1. URL for the current season (2026 based on your date)
         url = "https://www.basketball-reference.com/leagues/NBA_2026_ratings.html"
         
-        # Headers are CRITICAL to look like a real browser
+        # 2. Browser Headers (Crucial)
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
         }
         
-        # 1. Fetch the Page
+        # 3. Fetch
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
         
-        # 2. Parse with Pandas (Finds the main table automatically)
-        # Note: This requires the 'lxml' library we installed earlier
+        # 4. Parse Table
         dfs = pd.read_html(response.text)
-        
-        if not dfs:
-            return "Error: No table found on Basketball-Reference page."
-
+        if not dfs: return "Error: No table found."
         df = dfs[0]
         
-        # 3. Clean the Data
-        # We need Team, ORtg, DRtg, and NRtg (Net Rating)
-        # B-Ref column names can vary slightly, so we grab by index usually or standard names
-        # Standard B-Ref Ratings columns: [Rk, Team, Conf, Div, W, L, W/L%, MOV, ORtg, DRtg, NRtg, ...]
-        
-        # Let's just grab the columns we need by name if possible, or inspection
+        # 5. Clean Columns
+        # We look for Team, ORtg, DRtg, NRtg
         possible_cols = ['Team', 'ORtg', 'DRtg', 'NRtg']
-        
-        # Filter only if columns exist, otherwise take specific indices
         if set(possible_cols).issubset(df.columns):
             df = df[possible_cols]
         else:
-            # Fallback: usually Team is col 1, NRtg is col 10 (adjust as needed)
-            # But let's try to trust the headers first
             return f"Stats Format Changed. Columns found: {df.columns.tolist()}"
 
-        # 4. Format for the AI
         return df.to_string(index=False)
 
     except Exception as e:
-        return f"Error fetching stats from Basketball-Reference: {e}"
+        return f"Error fetching stats: {e}"
 
 # --- 2. GET LIVE ODDS ---
 def get_live_odds():
@@ -94,11 +80,14 @@ def get_live_odds():
         return "\n\n".join(results), None
     except Exception as e: return None, str(e)
 
-# --- 3. THE PARSER (Extracts picks from "Pending" mess) ---
+# --- 3. THE UPDATED PARSER (Handles Win Prob) ---
 def extract_pick(section_text):
     if not section_text: return "See Analysis"
-    # Find "Pick:" and stop before "Confidence" or "Analysis"
-    match = re.search(r"(?:Pick|Selection|Bet)\s*[:\-]\s*(.*?)(?:\s+Confidence|\s+Analysis|\n|$)", section_text, re.IGNORECASE)
+    
+    # Updated Regex: Stops at "Win Probability", "Confidence", or "Analysis"
+    # This prevents the percentage from getting stuck in the Team Name
+    match = re.search(r"(?:Pick|Selection|Bet)\s*[:\-]\s*(.*?)(?:\s+Win Probability|\s+Confidence|\s+Analysis|\n|$)", section_text, re.IGNORECASE)
+    
     if match:
         return match.group(1).strip().replace("*", "").replace("`", "")
     return "See Analysis"
@@ -116,17 +105,10 @@ def parse_response(text):
         print(f"Parsing Error: {e}")
     return lock, value
 
-# --- 4. THE BRAIN ---
+# --- 4. THE BRAIN (Now asks for Win %) ---
 def generate_nba_content():
-    print("Fetching Stats from Basketball Reference...")
     stats_text = get_nba_stats()
-    
-    print("Fetching Odds...")
     odds_text, error = get_live_odds()
-    
-    # If stats failed, we show the specific error so you can debug
-    if "Error" in stats_text and len(stats_text) < 200:
-        print(f"Stats Failed: {stats_text}")
     
     if error or not odds_text:
         return {"date": str(datetime.now().date()), "analysis": f"Error: {error}", "lock": "N/A", "value": "N/A"}
@@ -137,26 +119,29 @@ def generate_nba_content():
     You are Brandon Lang.
     
     Data:
-    --- TEAM ADVANCED STATS (2026 Season) ---
+    --- TEAM NET RATINGS (2026 Season) ---
     {stats_text}
     
     --- TODAY'S ODDS ---
     {odds_text}
     
     INSTRUCTIONS:
-    1. Compare the Net Ratings (NRtg).
-    2. LOCK OF THE DAY: Find the biggest mismatch in Net Rating vs the Spread.
-    3. VALUE PLAY: Find an underdog with a better Net Rating than the favorite.
+    1. Compare Net Ratings.
+    2. LOCK OF THE DAY: Find the biggest mismatch.
+    3. VALUE PLAY: Find the best underdog value.
+    4. WIN PROBABILITY: Estimate the % chance of winning based on the Net Rating gap.
     
     STRICT OUTPUT FORMAT:
     1. LOCK OF THE DAY
     Pick: [Team Name] [Spread/Moneyline]
+    Win Probability: [XX.X]%
     Confidence: [High/Medium]
-    Analysis: [Reference specific Net Ratings from the data]
+    Analysis: [Why?]
 
     2. VALUE PLAY
     Pick: [Team Name] [Spread/Moneyline]
-    Analysis: [Reference specific Net Ratings from the data]
+    Win Probability: [XX.X]%
+    Analysis: [Why?]
     """
     
     try:
@@ -177,4 +162,4 @@ if __name__ == "__main__":
     data = generate_nba_content()
     with open("picks.json", "w") as f:
         json.dump(data, f, indent=4)
-    print("Success! Picks generated.")
+    print("Success! Picks with Win Prob saved.")
