@@ -7,11 +7,12 @@ on:
   workflow_dispatch: # Allows manual trigger for testing
 
 permissions:
-  contents: write # REQUIRED: Allows the robot to save the JSON file back to your repo
+  contents: write
 
 jobs:
   generate-and-save:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
@@ -24,19 +25,25 @@ jobs:
       - name: Install Libraries
         run: pip install google-generativeai requests pandas nba_api lxml nfl_data_py
 
+      # --- NEW STEP: CHECK YESTERDAY'S RESULTS FIRST ---
+      - name: Check Results
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: python verify_picks.py
+
+      # --- THEN GENERATE TODAY'S PICKS ---
       - name: Run Pick Generator Script
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
-        run: python daily.picks.py
+        # Note: Your screenshot shows the file is named "daily.picks.py" (with a dot)
+        run: python daily.picks.py 
 
-      # --- THIS IS THE NEW PART YOU WERE MISSING ---
       - name: Commit and Push
         run: |
           git config --global user.email 'bot@github.com'
           git config --global user.name 'NBA Bot'
-          # We add picks.json because that is what daily.picks.py creates
-          git add picks.json
-          # This command only commits if there are changes (prevents errors if data is same)
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update NBA Picks" && git push)
+          # CRITICAL: Add history.json so the Win % is saved!
+          git add picks.json history.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update NBA Picks & History" && git push)
