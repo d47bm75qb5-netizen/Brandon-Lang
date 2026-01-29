@@ -37,8 +37,8 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
-        # Note: Your screenshot shows the file is named "daily.picks.py" (with a dot)
-        run: python daily.picks.py 
+        # Note: Matches the filename 'daily.picks.py' in your file tree
+        run: python daily.picks.py
 
       - name: Commit and Push
         run: |
@@ -46,4 +46,7 @@ jobs:
           git config --global user.name 'NBA Bot'
           # CRITICAL: Add history.json so the Win % is saved!
           git add picks.json history.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update NBA Picks & History" && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update NBA Picks & History")
+          # --- PULL LATEST CHANGES TO PREVENT CONFLICTS ---
+          git pull --rebase origin main
+          git push
