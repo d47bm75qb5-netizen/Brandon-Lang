@@ -1,84 +1,93 @@
 import streamlit as st
 import json
 import os
-import pandas as pd
+from datetime import datetime
 
-# --- PAGE SETUP ---
-st.set_page_config(page_title="Brandon Lang Super-Agent", layout="wide")
-st.title("🤑 Brandon Lang Super-Agent")
-st.caption("v24.0 • Automated Daily Picks • Verified Performance Tracking")
+# --- CONFIGURATION ---
+st.set_page_config(page_title="Brandon Lang: NBA Edition", page_icon="🏀", layout="wide")
 
-# --- LOAD HISTORY & CALCULATE STATS ---
-HISTORY_FILE = 'history.json'
-PICK_FILE = 'picks.json'
+# --- FILES ---
+PICKS_FILE = "picks.json"
+HISTORY_FILE = "history.json"
 
-def calculate_stats(history_data):
-    if not history_data:
-        return 0, 0, 0, 0
-    
-    df = pd.DataFrame(history_data)
-    
-    # Calculate Lock Win %
-    lock_wins = len(df[df['lock_result'] == 'WIN'])
-    lock_total = len(df[df['lock_result'].isin(['WIN', 'LOSS'])])
-    lock_pct = int((lock_wins / lock_total) * 100) if lock_total > 0 else 0
-    
-    # Calculate Value Win %
-    val_wins = len(df[df['value_result'] == 'WIN'])
-    val_total = len(df[df['value_result'].isin(['WIN', 'LOSS'])])
-    val_pct = int((val_wins / val_total) * 100) if val_total > 0 else 0
-    
-    return lock_pct, lock_wins, lock_total, val_pct, val_wins, val_total
+# --- LOAD DATA ---
+def load_data():
+    # Load Picks
+    if os.path.exists(PICKS_FILE):
+        with open(PICKS_FILE, "r") as f:
+            picks = json.load(f)
+    else:
+        picks = None
 
-# --- SIDEBAR: PERFORMANCE TRACKER ---
-if os.path.exists(HISTORY_FILE):
-    with open(HISTORY_FILE, 'r') as f:
-        history = json.load(f)
-    
-    l_pct, l_w, l_t, v_pct, v_w, v_t = calculate_stats(history)
-    
-    st.sidebar.header("🏆 Season Record")
-    st.sidebar.metric("🔒 Lock Win %", f"{l_pct}%", f"{l_w}-{l_t - l_w} Record")
-    st.sidebar.metric("🐕 Value Win %", f"{v_pct}%", f"{v_w}-{v_t - v_w} Record")
-    st.sidebar.markdown("---")
-    
-    # Optional: Show recent history in sidebar
-    with st.sidebar.expander("Recent Results"):
-        for item in history[:5]: # Show last 5
-            st.write(f"**{item['date']}**")
-            st.caption(f"🔒 {item['lock_result']} | 🐕 {item['value_result']}")
+    # Load History (for Win %)
+    if os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, "r") as f:
+            history = json.load(f)
+    else:
+        # Default blank history if file doesn't exist yet
+        history = {
+            "lock": {"wins": 0, "losses": 0, "pushes": 0},
+            "value": {"wins": 0, "losses": 0, "pushes": 0}
+        }
+    return picks, history
 
-# --- MAIN DISPLAY (TODAY'S PICKS) ---
-if os.path.exists(PICK_FILE):
-    try:
-        with open(PICK_FILE, 'r') as f:
-            data = json.load(f)
-        
-        st.header(f"📅 Picks for {data.get('date', 'Today')}")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("🔒 LOCK OF THE DAY", data.get('lock_of_the_day', "Pending..."))
-        with col2:
-            st.metric("🐕 VALUE PLAY", data.get('value_play', "Pending..."))
+def calculate_win_pct(record):
+    total = record['wins'] + record['losses'] # Pushes don't count towards %
+    if total == 0:
+        return "0%"
+    return f"{int((record['wins'] / total) * 100)}%"
 
-        st.markdown("---")
-        st.subheader("🤖 The Edge Analysis")
-        st.info(data.get('analysis', "No analysis available."))
+# --- MAIN APP ---
+picks, history = load_data()
 
-    except json.JSONDecodeError:
-        st.error("Error reading data.")
+# --- SIDEBAR (The Record) ---
+with st.sidebar:
+    st.header("🏆 Season Record")
+    
+    # Lock Stats
+    lock_pct = calculate_win_pct(history['lock'])
+    st.metric(
+        label="🔒 Lock Win %", 
+        value=lock_pct, 
+        delta=f"{history['lock']['wins']}-{history['lock']['losses']}"
+    )
+    
+    # Value Stats
+    value_pct = calculate_win_pct(history['value'])
+    st.metric(
+        label="🐕 Value Win %", 
+        value=value_pct, 
+        delta=f"{history['value']['wins']}-{history['value']['losses']}"
+    )
+
+    st.markdown("---")
+    st.caption("Updated Daily at 9:00 AM CST")
+
+# --- MAIN CONTENT ---
+if picks:
+    st.title("🏀 Brandon Lang: NBA Edition")
+    st.subheader(f"📅 Picks for {picks.get('date', 'Today')}")
+    st.markdown("---")
+
+    # THE HEADLINES (Big Bold Picks)
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("##### 🔒 Lock of the Day")
+        # Display the team name in big text
+        st.markdown(f"## {picks.get('lock', 'Pending...')}")
+
+    with col2:
+        st.markdown("##### 🐕 Value Play")
+        # Display the team name in big text
+        st.markdown(f"## {picks.get('value', 'Pending...')}")
+
+    st.markdown("---")
+
+    # THE COMMENTARY
+    # We replace newlines with double spaces to ensure markdown renders them as breaks
+    analysis_text = picks.get('analysis', 'No analysis available.').replace("\n", "  \n")
+    st.markdown(analysis_text)
+
 else:
-    # --- WAITING STATE ---
-    st.warning("⚠️ No picks available yet.")
-    st.markdown("""
-    **The Super-Agent runs automatically at:**
-    - 🕛 **12:00 PM CST**
-    - 🕔 **5:00 PM CST**
-    
-    *Check back after those times for the latest breakdown!*
-    """)
-
-# --- REFRESH BUTTON ---
-if st.button("🔄 Check for New Updates"):
-    st.rerun()
+    st.warning("⚠️ Data not found. The bot is likely running its morning update. Check back in 5 minutes!")
