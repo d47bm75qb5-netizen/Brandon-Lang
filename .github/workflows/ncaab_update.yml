@@ -12,24 +12,34 @@ permissions:
 jobs:
   run-ncaab:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v3
+
       - uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-      
-      # THIS IS THE FIXED LINE:
-      - run: pip install google-generativeai requests python-dateutil
-      
-      - name: Run Script
+
+      # UPGRADE 1: Add pandas and lxml for stat scraping
+      - run: pip install google-generativeai requests python-dateutil pandas lxml
+
+      # UPGRADE 2: Check History First (If you have a verify_ncaab.py)
+      # If you don't have this script yet, you can comment these 4 lines out.
+      - name: Check Results
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: python verify_ncaab.py
+
+      - name: Run Pick Generator
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: python ncaab_picks.py
-        
-      - name: Commit
+
+      - name: Commit and Push
         run: |
           git config --global user.email 'bot@github.com'
           git config --global user.name 'NCAAB Bot'
-          git add ncaab_picks.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update College Picks" && git push)
+          # UPGRADE 3: Save the history file too
+          git add ncaab_picks.json ncaab_history.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update NCAAB Picks & History" && git push)
