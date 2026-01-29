@@ -13,7 +13,7 @@ ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# --- 1. GET NBA STATS (The "TeamRankings" Version) ---
+# --- 1. GET NBA STATS (Source: TeamRankings) ---
 def get_nba_stats():
     """
     Scrapes TeamRankings.com for Net Efficiency.
@@ -23,7 +23,7 @@ def get_nba_stats():
         # 1. URL for Net Efficiency Stats
         url = "https://www.teamrankings.com/nba/stat/net-efficiency"
         
-        # 2. Simple Headers
+        # 2. Simple Headers to look like a browser
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
@@ -32,15 +32,13 @@ def get_nba_stats():
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         
-        # 4. Parse HTML Table
-        # (Pandas automatically finds the table)
+        # 4. Parse HTML Table (Pandas finds it automatically)
         dfs = pd.read_html(response.text)
         df = dfs[0]
         
         # 5. Clean Data
-        # TeamRankings format: "Rank", "Team", "2024", "Last 3", etc.
-        # We just want "Team" and the current season rating (usually col index 2)
-        df = df.iloc[:, [1, 2]] # Select Team Name and Current Rating
+        # We just want "Team" (Col 1) and "Current" Rating (Col 2)
+        df = df.iloc[:, [1, 2]] 
         df.columns = ['Team', 'Net_Rtg']
         
         return df.to_string(index=False)
@@ -79,7 +77,7 @@ def get_live_odds():
         return "\n\n".join(results), None
     except Exception as e: return None, str(e)
 
-# --- 3. THE PARSER (Fixed for One-Line Outputs) ---
+# --- 3. THE SMART PARSER (Fixes "Pending...") ---
 def extract_pick(section_text):
     """
     Improved Regex to handle cases where Confidence/Analysis is on the same line.
@@ -87,9 +85,7 @@ def extract_pick(section_text):
     """
     if not section_text: return "See Analysis"
     
-    # Regex Explanation:
-    # 1. Look for "Pick:", "Selection:", or "Bet:"
-    # 2. Capture everything until we hit "Confidence", "Analysis", or a new line
+    # Regex: Find "Pick:", capture text, STOP at "Confidence", "Analysis", or Newline
     match = re.search(r"(?:Pick|Selection|Bet)\s*[:\-]\s*(.*?)(?:\s+Confidence|\s+Analysis|\n|$)", section_text, re.IGNORECASE)
     
     if match:
@@ -145,7 +141,7 @@ def generate_nba_content():
     {odds_text}
     
     INSTRUCTIONS:
-    1. Compare Net Ratings. If a team with a +5.0 Net Rtg is playing a team with a -3.0 Net Rtg, that is a mismatch.
+    1. Compare Net Ratings.
     2. LOCK OF THE DAY: The biggest statistical mismatch.
     3. VALUE PLAY: A team getting points (Underdog) that has a better Net Rating than their opponent.
     
