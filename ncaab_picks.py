@@ -1,9 +1,10 @@
 import os
 import json
 import requests
+import pandas as pd
 import google.generativeai as genai
-from datetime import datetime, timedelta, timezone
-import dateutil.parser
+import re
+from datetime import datetime, timezone, timedelta
 
 # --- CONFIGURATION ---
 GEMINI_API_KEY = os.environ.get("GOOGLE_API_KEY")
@@ -12,131 +13,151 @@ ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# --- BARTTORVIK ADVANCED STATS ---
-def get_barttorvik_stats():
+# --- 1. GET NCAAB STATS (Sports Reference) ---
+def get_ncaab_stats():
     """
-    Fetches T-Rank advanced stats (Adj Efficiency, etc.) for all teams.
-    Returns a dictionary keyed by Team Name.
+    Scrapes Sports-Reference.com for CBB Ratings (SRS).
+    SRS (Simple Rating System) is the best predictive metric for College.
     """
     try:
-        # Get data for the current season
-        current_year = datetime.now().year
-        if datetime.now().month > 4: 
-            current_year += 1 # Season flip logic
+        # Fetch 2026 Stats (Matching your NBA Date)
+        url = "https://www.sports-reference.com/cbb/seasons/2026-ratings.html"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'}
         
-        url = f"https://barttorvik.com/{current_year}_team_results.json"
+        response = requests.get(url, headers=headers, timeout=15)
         
-        # ADDED HEADERS TO FIX THE "EXPECTING VALUE" ERROR
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+        # Parse HTML Table
+        dfs = pd.read_html(response.text)
+        if not dfs: return "Error: No table found."
+        df = dfs[0]
         
-        response = requests.get(url, headers=headers, timeout=10)
-        data = response.json()
+        # Clean Data: CBB tables often repeat headers, so we remove those rows
+        df = df[df['School'] != 'School']
         
-        stats_dict = {}
-        for row in data:
-            # Row index breakdown: [1]=Name, [6]=AdjOff, [8]=AdjDef, [21]=Win%
-            team_name = row[1]
-            stats_dict[team_name] = {
-                "AdjOE": float(row[6]), # Adjusted Offensive Efficiency
-                "AdjDE": float(row[8]), # Adjusted Defensive Efficiency
-                "Barthag": float(row[2]) # Power Rating (0.0 to 1.0)
-            }
-        return stats_dict
+        # Select Columns: School and SRS (Simple Rating System)
+        # SRS is essentially "Point Differential adjusted for Strength of Schedule"
+        if 'SRS' in df.columns:
+            df = df[['School', 'SRS']]
+        else:
+            return f"Stats Format Changed. Columns: {df.columns.tolist()}"
+        
+        return df.to_string(index=False)
     except Exception as e:
-        print(f"Error fetching Barttorvik stats: {e}")
-        return {}
+        return f"Error fetching stats: {e}"
 
-def find_team_stats(team_name, stats_dict):
-    """
-    Simple fuzzy matcher to connect Odds API names to Barttorvik names.
-    e.g. "Purdue Boilermakers" -> "Purdue"
-    """
-    if not stats_dict: return None
-    
-    # 1. Direct match
-    if team_name in stats_dict: return stats_dict[team_name]
-    
-    # 2. Partial match (e.g. "Duke" in "Duke Blue Devils")
-    for key in stats_dict:
-        if key in team_name or team_name in key:
-            return stats_dict[key]
-            
-    return None
-
+# --- 2. GET LIVE ODDS (NCAAB) ---
 def get_live_odds():
-    # 1. SETUP
-    target_date = datetime.now(timezone(timedelta(hours=-6))).date()
-    sport_key = "basketball_ncaab"
+    # FORCE US CENTRAL TIME (UTC-6)
+    cst_now = datetime.now(timezone(timedelta(hours=-6)))
+    today = cst_now.date()
     
-    # 2. GET ADVANCED STATS FIRST
-    print("Fetching Barttorvik Advanced Stats...")
-    advanced_stats = get_barttorvik_stats()
-    
-    # 3. GET ODDS
-    url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/odds'
-    params = {
-        'apiKey': ODDS_API_KEY, 
-        'regions': 'us', 
-        'markets': 'h2h,spreads,totals', 
-        'oddsFormat': 'american'
-    }
+    # URL for College Basketball Odds
+    url = 'https://api.the-odds-api.com/v4/sports/basketball_ncaab/odds'
+    params = {'apiKey': ODDS_API_KEY, 'regions': 'us', 'markets': 'h2h,spreads,totals', 'oddsFormat': 'american'}
     
     try:
         response = requests.get(url, params=params)
         data = response.json()
         
-        # Check for API Error Message
-        if isinstance(data, dict) and 'message' in data:
-            return None, f"Odds API Error: {data['message']}"
-            
-        if not isinstance(data, list):
-            return None, f"API Error: {data}"
+        if not isinstance(data, list): return None, "Error fetching odds."
 
-        games = [g for g in data if dateutil.parser.isoparse(g['commence_time']).astimezone(timezone(timedelta(hours=-6))).date() == target_date]
+        games = []
+        for g in data:
+            try:
+                game_time = datetime.fromisoformat(g['commence_time'].replace('Z', '+00:00'))
+                game_cst = game_time.astimezone(timezone(timedelta(hours=-6))).date()
+                if game_cst == today:
+                    games.append(g)
+            except: continue
         
-        if not games: return None, "No NCAAB games found for today."
-        
-        # Limit to 15 games to save tokens
-        games = games[:15]
+        if not games: return None, f"No NCAAB games found for {today}."
         
         results = []
         for g in games:
-            h_name, a_name = g['home_team'], g['away_team']
-            
-            # Match names to stats
-            h_stats = find_team_stats(h_name, advanced_stats)
-            a_stats = find_team_stats(a_name, advanced_stats)
-            
-            # Format the stats string
-            h_info = f"{h_name} (AdjO: {h_stats['AdjOE']}, AdjD: {h_stats['AdjDE']})" if h_stats else h_name
-            a_info = f"{a_name} (AdjO: {a_stats['AdjOE']}, AdjD: {a_stats['AdjDE']})" if a_stats else a_name
-            
-            results.append(f"MATCHUP: {a_info} @ {h_info}\nMARKETS: {json.dumps(g['bookmakers'][:1])}")
+            home, away = g['home_team'], g['away_team']
+            odds = json.dumps(g['bookmakers'][0]['markets']) if g['bookmakers'] else "No Odds"
+            results.append(f"MATCHUP: {away} @ {home}\nODDS: {odds}")
             
         return "\n\n".join(results), None
     except Exception as e: return None, str(e)
 
+# --- 3. THE "FIND ALL" PARSER ---
 def parse_response(text):
+    """
+    Scans the text for ALL occurrences of 'Pick:' regardless of layout.
+    """
     lock, value = "See Analysis", "See Analysis"
     try:
-        if "LOCK OF THE DAY" in text:
-            parts = text.split("LOCK OF THE DAY")[1].split("VALUE PLAY")[0]
-            for line in parts.split("\n"):
-                if "Pick:" in line: lock = line.replace("Pick:", "").strip(); break
-        if "VALUE PLAY" in text:
-            parts = text.split("VALUE PLAY")[1]
-            for line in parts.split("\n"):
-                if "Pick:" in line: value = line.replace("Pick:", "").strip(); break
-    except: pass
+        pattern = r"(?:Pick|Selection|Bet)\s*[:\-]\s*(.*?)(?:\s+(?:Win Probability|Confidence|Analysis)|\n|$)"
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        
+        if len(matches) >= 1:
+            lock = matches[0].strip().replace("*", "").replace("`", "")
+        if len(matches) >= 2:
+            value = matches[1].strip().replace("*", "").replace("`", "")
+    except Exception as e:
+        print(f"Parsing Error: {e}")
     return lock, value
 
+# --- 4. THE BRAIN ---
 def generate_ncaab_content():
-    games_text, error = get_live_odds()
-    
-    if error or not games_text:
-        return {"date": str(datetime.now().date()), "analysis": f"Error: {error}", "lock": "N/A", "value": "N/A"}
+    cst_now = datetime.now(timezone(timedelta(hours=-6)))
+    current_date = str(cst_now.date())
 
-    # FAIL SAFE FOR MISSING KEY
-    if not
+    stats_text = get_ncaab_stats()
+    odds_text, error = get_live_odds()
+    
+    if error or not odds_text:
+        return {"date": current_date, "analysis": f"Error: {error}", "lock": "N/A", "value": "N/A"}
+
+    model = genai.GenerativeModel('gemini-2.5-flash')
+    
+    prompt = f"""
+    You are Brandon Lang, expert College Basketball handicapper.
+    
+    Data:
+    --- TEAM SRS RATINGS (Simple Rating System) ---
+    (Higher SRS is better. SRS = Point Differential + Strength of Schedule)
+    {stats_text}
+    
+    --- TODAY'S ODDS ---
+    {odds_text}
+    
+    INSTRUCTIONS:
+    1. Compare SRS Ratings. A team with an SRS of 15.0 is significantly better than a team with SRS 5.0.
+    2. LOCK OF THE DAY: Find the biggest mismatch between SRS and the Spread.
+    3. VALUE PLAY: Find a good underdog with a decent SRS.
+    4. WIN PROBABILITY: Calculate % chance of winning based on the SRS gap.
+    
+    STRICT OUTPUT FORMAT:
+    1. LOCK OF THE DAY
+    Pick: [Team Name] [Spread/Moneyline]
+    Win Probability: [XX.X]%
+    Confidence: [High/Medium]
+    Analysis: [Reasoning using SRS]
+
+    2. VALUE PLAY
+    Pick: [Team Name] [Spread/Moneyline]
+    Win Probability: [XX.X]%
+    Analysis: [Reasoning using SRS]
+    """
+    
+    try:
+        analysis = model.generate_content(prompt).text
+        lock, value = parse_response(analysis)
+
+        return {
+            "date": current_date,
+            "analysis": analysis,
+            "lock": lock,
+            "value": value
+        }
+    except Exception as e:
+        return {"date": current_date, "analysis": f"AI Error: {e}", "lock": "Error", "value": "Error"}
+
+if __name__ == "__main__":
+    print("Starting NCAAB Analysis...")
+    data = generate_ncaab_content()
+    with open("ncaab_picks.json", "w") as f:
+        json.dump(data, f, indent=4)
+    print("Success! NCAAB Picks saved.")
