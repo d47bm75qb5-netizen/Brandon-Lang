@@ -1,6 +1,13 @@
 {
-    "date": "2026-01-29",
-    "analysis": "Alright, college hoops degenerates, Brandon Lang is in the house, and I've got the numbers to back up your bankroll! Forget what the talking heads are spouting; we're diving deep into the TeamRankings Predictive Ratings and sniffing out where Vegas got it wrong. Let's make some money!\n\nHere\u2019s how we're breaking it down: I'm comparing my trusted predictive ratings to those chalk lines from Vegas. When my numbers show a team is significantly stronger than the oddsmakers believe \u2013 either as a favored team not getting enough respect, or an underdog who's far more capable than given credit for \u2013 that's where we find the value. The bigger the discrepancy, the bigger the edge, and the bigger the potential payout for you!\n\nLet's get to the picks, fellas!\n\n---\n1. LOCK OF THE DAY\nPick: Gardner-Webb Bulldogs +18.5\nWin Probability: 17.2%\nConfidence: Medium\nAnalysis: UNC Asheville is rated -2.9 and Gardner-Webb is rated -19.3. My model expects UNC Asheville to win by 16.4 points, but Vegas has them as a 18.5-point favorite. That means Gardner-Webb is getting 18.5 points, which is 2.1 points more than my model thinks they should need to cover! The Bulldogs might not win outright, but they're a much better team than the market suggests, and they'll keep this one closer than Vegas expects. Give me Gardner-Webb and all those points!\n\n2. VALUE PLAY\nPick: Colorado Buffaloes +17.0\nWin Probability: 20.0%\nAnalysis: Iowa St is rated 22.8 and Colorado is rated 7.8. My model expects Iowa St to win by 15.0 points, but Vegas has them as a 17.0-point favorite. That means Colorado is getting 17.0 points, which is 2.0 points more than my model thinks they should need to cover! Colorado is a feisty bunch, and while Iowa State is strong, 17 points is just too many against a team with more fight than Vegas realizes. Take the Buffaloes to keep it within the number.",
-    "lock": "Gardner-Webb Bulldogs +18.5",
-    "value": "Colorado Buffaloes +17.0"
+    "lock": {
+        "wins": 0,
+        "losses": 0,
+        "pushes": 0
+    },
+    "value": {
+        "wins": 0,
+        "losses": 0,
+        "pushes": 0
+    },
+    "updated_date": ""
 }
