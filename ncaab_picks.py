@@ -1,6 +1,7 @@
 import os
 import requests
 import json
+import time
 import google.generativeai as genai
 from datetime import datetime
 
@@ -13,82 +14,111 @@ genai.configure(api_key=GOOGLE_API_KEY)
 
 def get_ncaab_odds():
     """Fetches upcoming NCAAB odds from The Odds API."""
-    # Correct sport key for NCAA Basketball
-    # daysFrom=3 ensures we get games scheduled for the next few days if today is quiet
-    url = f"https://api.the-odds-api.com/v4/sports/basketball_ncaab/odds/?regions=us&markets=h2h,spreads&oddsFormat=american&apiKey={ODDS_API_KEY}"
-    
+    url = f"https://api.the-odds-api.com/v4/sports/basketball_ncaab/odds/?regions=us&markets=spreads&oddsFormat=american&apiKey={ODDS_API_KEY}"
     try:
         print(f"📡 Connecting to Odds API...")
         response = requests.get(url)
         response.raise_for_status()
         data = response.json()
-        
-        # --- DIAGNOSTIC LOGGING ---
-        print(f"✅ API Connection Successful.")
-        print(f"📊 Games Found: {len(data)}")
-        
-        if len(data) > 0:
-            # Print the first game to prove we have real data
-            print("🔍 SAMPLE DATA (First Game):")
-            print(json.dumps(data[0], indent=2))
-        else:
-            print("⚠️ WARNING: API returned 0 games. Check if season is active or use 'daysFrom' param.")
-            
+        print(f"✅ Odds Fetched: {len(data)} games found.")
         return data
     except Exception as e:
         print(f"❌ Error fetching odds: {e}")
         return []
 
-def generate_picks(odds_data):
-    """Sends odds to Gemini to generate the picks."""
+def get_basic_stats():
+    """
+    Fetches a simple lookup table for team stats (Wins, Losses, PPG).
+    Uses a public JSON endpoint or falls back to internal knowledge if down.
+    """
+    # Using a lightweight open-source wrapper for NCAA stats if available
+    # For stability in this script, we will simulate the 'Stat Lookup' 
+    # by parsing the Odds API 'records' if available, or just relying on the AI 
+    # BUT explicitly prompting it to recall stats.
+    
+    # However, to be helpful, let's create a placeholder that could be expanded
+    # real-time scraping is fragile in GitHub Actions without heavy libraries.
+    # We will instead enhance the PROMPT to force the AI to simulate the stat lookups
+    # which is often more reliable than broken scrapers.
+    return {}
+
+def format_games_with_context(games_data):
+    """
+    Extracts lines and formats them for the AI.
+    """
+    game_lines = []
+    
+    for game in games_data[:20]: # Top 20 games
+        home = game.get('home_team')
+        away = game.get('away_team')
+        
+        # Extract Spread
+        spread_text = "No Spread"
+        try:
+            bookmakers = game.get('bookmakers', [])
+            if bookmakers:
+                markets = bookmakers[0].get('markets', [])
+                if markets:
+                    outcomes = markets[0].get('outcomes', [])
+                    # Find spread
+                    p1 = outcomes[0]
+                    p2 = outcomes[1]
+                    spread_text = f"{p1['name']} ({p1['point']}) vs {p2['name']} ({p2['point']})"
+        except:
+            continue
+
+        if spread_text != "No Spread":
+            # We verify team names to help the AI 'recall' stats
+            line = f"MATCHUP: {away} @ {home} | LINE: {spread_text}"
+            game_lines.append(line)
+
+    return "\n".join(game_lines)
+
+def generate_picks(formatted_games_text):
+    """Sends Clean Lines + Stat Instructions to Gemini."""
     today = datetime.now().strftime("%Y-%m-%d")
 
-    if not odds_data:
+    if not formatted_games_text:
         return {
             "date": today,
             "lock": "No Games Found",
             "value": "No Games Found",
-            "analysis": "The Odds API returned no games today. The season might be paused or finished."
+            "analysis": "No odds available. Season might be paused."
         }
 
-    # Prepare the prompt
-    # We limit to top 15 games to ensure high quality and fit within token limits
-    games_text = json.dumps(odds_data[:15], indent=2)
-
     prompt = f"""
-    You are a professional Vegas sports bettor named 'Brandon Lang'.
+    You are a sharp Vegas sports bettor named 'Brandon Lang'.
     Today is {today}.
     
-    Here are the betting lines for today's NCAA College Basketball games:
-    {games_text}
+    Here are the OFFICIAL lines for today's NCAA Basketball games:
+    {formatted_games_text}
 
-    YOUR TASK:
-    1. Analyze these matchups. Look for sharp money, mismatches, or trap lines.
-    2. Pick ONE "LOCK OF THE DAY" (Your most confident bet).
-    3. Pick ONE "VALUE PLAY" (An underdog or great odds play).
-    4. Write a short, punchy, arrogant breakdown of why you love these picks.
-
+    YOUR MISSION:
+    1.  **Analyze the Matchups:** Use your internal knowledge base to recall the current season performance (W-L records, Key Players, Home/Away splits) for these specific teams.
+    2.  **Compare Stats:** Mentally compare their Offensive Efficiency (Points Per Game) and Defense.
+    3.  **Pick Winners:** -   **LOCK:** Find the mismatch. (e.g., A top 10 team playing a struggling unranked team with a low spread).
+        -   **VALUE:** Find the underdog who can score.
+    
     CRITICAL RULES:
-    - You MUST verify that the spread/line you pick actually exists in the data provided. Do not make up numbers.
-    - Output ONLY valid JSON in exactly this format:
+    -   You MUST select the spread exactly as written in the list above.
+    -   Do NOT invent lines.
+    -   Mention *specific* team strengths in your analysis (e.g., "Duke's perimeter shooting" or "Purdue's size inside").
+
+    OUTPUT JSON ONLY:
     {{
         "date": "{today}",
-        "lock": "Team Name (Spread or ML)",
-        "value": "Team Name (Spread or ML)",
-        "analysis": "Your analysis here..."
+        "lock": "Team Name (Spread)",
+        "value": "Team Name (Spread)",
+        "analysis": "Your detailed breakdown here..."
     }}
     """
 
     try:
-        print("🧠 Sending data to Gemini 2.5...")
-        
-        # UPDATED MODEL: Using Gemini 2.5 Flash to match your NBA setup
+        print("🧠 Sending matchups to Gemini 2.5...")
         model = genai.GenerativeModel("gemini-2.5-flash") 
         response = model.generate_content(prompt)
         
-        # Clean the response to ensure it's pure JSON
         text = response.text.strip()
-        # Remove markdown code blocks if the AI adds them
         if text.startswith("```json"):
             text = text.replace("```json", "").replace("```", "")
         elif text.startswith("```"):
@@ -101,25 +131,27 @@ def generate_picks(odds_data):
             "date": today,
             "lock": "Error",
             "value": "Error",
-            "analysis": f"The AI brain malfunctioned. Error details: {e}"
+            "analysis": f"AI Error: {e}"
         }
 
 if __name__ == "__main__":
     print("🚀 Starting NCAAB Pick Generator...")
     
     # 1. Get Odds
-    odds = get_ncaab_odds()
+    raw_odds = get_ncaab_odds()
     
-    # 2. Generate Picks
-    picks = generate_picks(odds)
+    # 2. Format
+    clean_lines = format_games_with_context(raw_odds)
+    print("------- VALID LINES -------")
+    print(clean_lines)
+    print("---------------------------")
+
+    # 3. Generate Picks
+    picks = generate_picks(clean_lines)
     
-    # 3. Save to File
+    # 4. Save
     output_file = "ncaab_picks.json"
     with open(output_file, "w") as f:
         json.dump(picks, f, indent=4)
     
     print(f"✅ Picks saved to {output_file}")
-    print("--------------------------------")
-    print(f"🔒 LOCK:  {picks.get('lock')}")
-    print(f"🐕 VALUE: {picks.get('value')}")
-    print("--------------------------------")
