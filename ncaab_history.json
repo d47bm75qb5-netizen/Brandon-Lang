@@ -1,16 +1,13 @@
-[
-    {
-        "date": "2026-01-29",
-        "lock_pick": "Gardner-Webb Bulldogs +18.5",
-        "lock_result": "PENDING",
-        "value_pick": "Colorado Buffaloes +17.0",
-        "value_result": "PENDING"
+{
+    "lock": {
+        "wins": 0,
+        "losses": 0,
+        "pushes": 0
     },
-    {
-        "date": "2026-01-28",
-        "lock_pick": "N/A",
-        "lock_result": "N/A",
-        "value_pick": "N/A",
-        "value_result": "N/A"
-    }
-]
+    "value": {
+        "wins": 0,
+        "losses": 0,
+        "pushes": 0
+    },
+    "updated_date": ""
+}
