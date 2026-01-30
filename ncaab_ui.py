@@ -1,44 +1,74 @@
 import streamlit as st
+import pandas as pd
 import json
 import os
-import pandas as pd
 
-st.set_page_config(page_title="NCAAB Super-Agent", layout="wide")
-st.title("🏀 Brandon Lang: March Madness Edition")
+# --- PAGE CONFIG ---
+st.set_page_config(
+    page_title="NCAAB Super-Agent",
+    page_icon="🏀",
+    layout="wide"
+)
 
-# --- SIDEBAR TRACKER ---
-HISTORY_FILE = 'ncaab_history.json'
-if os.path.exists(HISTORY_FILE):
-    with open(HISTORY_FILE, 'r') as f:
-        history = json.load(f)
-        
-    df = pd.DataFrame(history)
-    if not df.empty:
-        # Calculate Win %
-        l_wins = len(df[df['lock_result'] == 'WIN'])
-        l_total = len(df[df['lock_result'].isin(['WIN', 'LOSS'])])
-        l_pct = int((l_wins / l_total) * 100) if l_total > 0 else 0
-        
-        v_wins = len(df[df['value_result'] == 'WIN'])
-        v_total = len(df[df['value_result'].isin(['WIN', 'LOSS'])])
-        v_pct = int((v_wins / v_total) * 100) if v_total > 0 else 0
+# --- LOAD DATA ---
+def load_data():
+    # Load Picks
+    if os.path.exists("ncaab_picks.json"):
+        with open("ncaab_picks.json", "r") as f:
+            picks = json.load(f)
+    else:
+        picks = {"date": "Pending", "lock": "Pending", "value": "Pending", "reasoning": "Pending"}
 
-        st.sidebar.header("🏆 Tournament Record")
-        st.sidebar.metric("🔒 Lock Win %", f"{l_pct}%", f"{l_wins}-{l_total-l_wins}")
-        st.sidebar.metric("🐕 Value Win %", f"{v_pct}%", f"{v_wins}-{v_total-v_wins}")
-
-# --- MAIN DISPLAY ---
-PICK_FILE = 'ncaab_picks.json'
-if os.path.exists(PICK_FILE):
-    with open(PICK_FILE, 'r') as f:
-        data = json.load(f)
+    # Load History (The New Scoreboard Format)
+    if os.path.exists("ncaab_history.json"):
+        with open("ncaab_history.json", "r") as f:
+            history = json.load(f)
+    else:
+        history = {
+            "lock": {"wins": 0, "losses": 0, "pushes": 0},
+            "value": {"wins": 0, "losses": 0, "pushes": 0}
+        }
     
-    st.header(f"📅 Picks for {data.get('date')}")
-    col1, col2 = st.columns(2)
-    col1.metric("🔒 Lock of the Day", data.get('lock'))
-    col2.metric("🐕 Value Play", data.get('value'))
-    st.markdown("---")
-    st.write(data.get('analysis'))
-else:
-    st.warning("⚠️ No College picks generated yet.")
-    st.info("Check back at 12:00 PM and 5:00 PM CST.")
+    return picks, history
+
+picks_data, history_data = load_data()
+
+# --- SIDEBAR (SCOREBOARD) ---
+st.sidebar.header("🏆 Betting Record")
+
+def calculate_win_rate(record):
+    total = record['wins'] + record['losses']
+    if total == 0:
+        return "0%"
+    return f"{int((record['wins'] / total) * 100)}%"
+
+# Lock Stats
+lock_rec = history_data.get("lock", {"wins": 0, "losses": 0, "pushes": 0})
+lock_wr = calculate_win_rate(lock_rec)
+st.sidebar.metric("🔒 Lock Win %", lock_wr, f"{lock_rec['wins']}-{lock_rec['losses']}")
+
+# Value Stats
+value_rec = history_data.get("value", {"wins": 0, "losses": 0, "pushes": 0})
+value_wr = calculate_win_rate(value_rec)
+st.sidebar.metric("🐕 Value Win %", value_wr, f"{value_rec['wins']}-{value_rec['losses']}")
+
+st.sidebar.markdown("---")
+st.sidebar.write("Last Updated:", picks_data.get("date", "Unknown"))
+
+# --- MAIN PAGE ---
+st.title("🏀 Brandon Lang: March Madness Edition")
+st.markdown(f"### 📅 **Picks for {picks_data.get('date', 'Today')}**")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown("### 🔒 **LOCK OF THE DAY**")
+    st.info(f"## {picks_data.get('lock', 'Pending')}")
+
+with col2:
+    st.markdown("### 🐕 **VALUE PLAY**")
+    st.success(f"## {picks_data.get('value', 'Pending')}")
+
+st.markdown("---")
+st.subheader("📝 The Breakdown")
+st.write(picks_data.get("reasoning", "Analysis pending..."))
