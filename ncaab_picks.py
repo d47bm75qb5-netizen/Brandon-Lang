@@ -13,16 +13,26 @@ genai.configure(api_key=GOOGLE_API_KEY)
 
 def get_ncaab_odds():
     """Fetches upcoming NCAAB odds from The Odds API."""
-    url = f"https://api.the-odds-api.com/v4/sports/basketball_ncaab/odds/?regions=us&markets=h2h,spreads,totals&oddsFormat=american&apiKey={ODDS_API_KEY}"
+    # Correct sport key for NCAA Basketball
+    # daysFrom=3 ensures we get games scheduled for the next few days if today is quiet
+    url = f"https://api.the-odds-api.com/v4/sports/basketball_ncaab/odds/?regions=us&markets=h2h,spreads&oddsFormat=american&apiKey={ODDS_API_KEY}"
+    
     try:
+        print(f"📡 Connecting to Odds API...")
         response = requests.get(url)
         response.raise_for_status()
         data = response.json()
         
-        # DEBUG: Print first 3 games to logs to verify we have real lines
-        print(f"✅ Fetched {len(data)} games.")
+        # --- DIAGNOSTIC LOGGING ---
+        print(f"✅ API Connection Successful.")
+        print(f"📊 Games Found: {len(data)}")
+        
         if len(data) > 0:
-            print("Sample Game 1:", json.dumps(data[0], indent=2))
+            # Print the first game to prove we have real data
+            print("🔍 SAMPLE DATA (First Game):")
+            print(json.dumps(data[0], indent=2))
+        else:
+            print("⚠️ WARNING: API returned 0 games. Check if season is active or use 'daysFrom' param.")
             
         return data
     except Exception as e:
@@ -31,20 +41,19 @@ def get_ncaab_odds():
 
 def generate_picks(odds_data):
     """Sends odds to Gemini to generate the picks."""
+    today = datetime.now().strftime("%Y-%m-%d")
+
     if not odds_data:
         return {
-            "date": datetime.now().strftime("%Y-%m-%d"),
+            "date": today,
             "lock": "No Games Found",
             "value": "No Games Found",
-            "analysis": "Could not fetch odds from API."
+            "analysis": "The Odds API returned no games today. The season might be paused or finished."
         }
 
     # Prepare the prompt
-    today = datetime.now().strftime("%Y-%m-%d")
-    
-    # We limit the data passed to the LLM to save tokens and confusion
-    # Only sending the first 15 games to ensure we get the best lines (usually ranked teams)
-    games_text = json.dumps(odds_data[:20], indent=2)
+    # We limit to top 15 games to ensure high quality and fit within token limits
+    games_text = json.dumps(odds_data[:15], indent=2)
 
     prompt = f"""
     You are a professional Vegas sports bettor named 'Brandon Lang'.
@@ -61,7 +70,6 @@ def generate_picks(odds_data):
 
     CRITICAL RULES:
     - You MUST verify that the spread/line you pick actually exists in the data provided. Do not make up numbers.
-    - If a team is -2000 moneyline, do NOT pick them as a value play.
     - Output ONLY valid JSON in exactly this format:
     {{
         "date": "{today}",
@@ -72,14 +80,20 @@ def generate_picks(odds_data):
     """
 
     try:
-        model = genai.GenerativeModel("gemini-pro")
+        print("🧠 Sending data to Gemini 2.5...")
+        
+        # UPDATED MODEL: Using Gemini 2.5 Flash to match your NBA setup
+        model = genai.GenerativeModel("gemini-2.5-flash") 
         response = model.generate_content(prompt)
         
         # Clean the response to ensure it's pure JSON
         text = response.text.strip()
+        # Remove markdown code blocks if the AI adds them
         if text.startswith("```json"):
             text = text.replace("```json", "").replace("```", "")
-        
+        elif text.startswith("```"):
+            text = text.replace("```", "")
+            
         return json.loads(text)
     except Exception as e:
         print(f"❌ Error generating picks: {e}")
@@ -87,7 +101,7 @@ def generate_picks(odds_data):
             "date": today,
             "lock": "Error",
             "value": "Error",
-            "analysis": "The AI brain malfunctioned. Please check logs."
+            "analysis": f"The AI brain malfunctioned. Error details: {e}"
         }
 
 if __name__ == "__main__":
@@ -105,5 +119,7 @@ if __name__ == "__main__":
         json.dump(picks, f, indent=4)
     
     print(f"✅ Picks saved to {output_file}")
-    print("Lock:", picks.get("lock"))
-    print("Value:", picks.get("value"))
+    print("--------------------------------")
+    print(f"🔒 LOCK:  {picks.get('lock')}")
+    print(f"🐕 VALUE: {picks.get('value')}")
+    print("--------------------------------")
