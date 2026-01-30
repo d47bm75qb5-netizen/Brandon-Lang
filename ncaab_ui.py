@@ -71,4 +71,4 @@ with col2:
 
 st.markdown("---")
 st.subheader("📝 The Breakdown")
-st.write(picks_data.get("reasoning", "Analysis pending..."))
+st.write(picks_data.get("analysis", "Analysis pending..."))
