@@ -1,9 +1,9 @@
 import os
 import requests
 import json
-import time
 import google.generativeai as genai
 from datetime import datetime
+from zoneinfo import ZoneInfo  # <--- NEW: Import Timezone support
 
 # --- CONFIGURATION ---
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
@@ -26,29 +26,14 @@ def get_ncaab_odds():
         print(f"❌ Error fetching odds: {e}")
         return []
 
-def get_basic_stats():
-    """
-    Fetches a simple lookup table for team stats (Wins, Losses, PPG).
-    Uses a public JSON endpoint or falls back to internal knowledge if down.
-    """
-    # Using a lightweight open-source wrapper for NCAA stats if available
-    # For stability in this script, we will simulate the 'Stat Lookup' 
-    # by parsing the Odds API 'records' if available, or just relying on the AI 
-    # BUT explicitly prompting it to recall stats.
-    
-    # However, to be helpful, let's create a placeholder that could be expanded
-    # real-time scraping is fragile in GitHub Actions without heavy libraries.
-    # We will instead enhance the PROMPT to force the AI to simulate the stat lookups
-    # which is often more reliable than broken scrapers.
-    return {}
-
 def format_games_with_context(games_data):
     """
     Extracts lines and formats them for the AI.
     """
     game_lines = []
     
-    for game in games_data[:20]: # Top 20 games
+    # Process top 25 games to give us a good selection
+    for game in games_data[:25]: 
         home = game.get('home_team')
         away = game.get('away_team')
         
@@ -68,7 +53,6 @@ def format_games_with_context(games_data):
             continue
 
         if spread_text != "No Spread":
-            # We verify team names to help the AI 'recall' stats
             line = f"MATCHUP: {away} @ {home} | LINE: {spread_text}"
             game_lines.append(line)
 
@@ -76,7 +60,10 @@ def format_games_with_context(games_data):
 
 def generate_picks(formatted_games_text):
     """Sends Clean Lines + Stat Instructions to Gemini."""
-    today = datetime.now().strftime("%Y-%m-%d")
+    
+    # --- TIMEZONE FIX ---
+    # Force the date to be US Eastern Time, not UTC
+    today = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
     if not formatted_games_text:
         return {
@@ -94,15 +81,13 @@ def generate_picks(formatted_games_text):
     {formatted_games_text}
 
     YOUR MISSION:
-    1.  **Analyze the Matchups:** Use your internal knowledge base to recall the current season performance (W-L records, Key Players, Home/Away splits) for these specific teams.
-    2.  **Compare Stats:** Mentally compare their Offensive Efficiency (Points Per Game) and Defense.
-    3.  **Pick Winners:** -   **LOCK:** Find the mismatch. (e.g., A top 10 team playing a struggling unranked team with a low spread).
+    1.  **Analyze the Matchups:** Use your internal knowledge base to recall the current season performance for these teams.
+    2.  **Pick Winners:** -   **LOCK:** Find the mismatch. (e.g., A top team playing a struggling team).
         -   **VALUE:** Find the underdog who can score.
     
     CRITICAL RULES:
     -   You MUST select the spread exactly as written in the list above.
     -   Do NOT invent lines.
-    -   Mention *specific* team strengths in your analysis (e.g., "Duke's perimeter shooting" or "Purdue's size inside").
 
     OUTPUT JSON ONLY:
     {{
