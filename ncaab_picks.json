@@ -1,13 +1,6 @@
 {
-    "lock": {
-        "wins": 0,
-        "losses": 0,
-        "pushes": 0
-    },
-    "value": {
-        "wins": 0,
-        "losses": 0,
-        "pushes": 0
-    },
-    "updated_date": ""
+    "date": "2000-01-01",
+    "lock": "Pending",
+    "value": "Pending",
+    "reasoning": "Pending"
 }
