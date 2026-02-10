@@ -1,13 +1,13 @@
 {
     "lock": {
         "wins": 3,
-        "losses": 3,
+        "losses": 4,
         "pushes": 0
     },
     "value": {
-        "wins": 4,
+        "wins": 5,
         "losses": 1,
         "pushes": 0
     },
-    "updated_date": "2026-02-09"
+    "updated_date": "2026-02-10"
 }
