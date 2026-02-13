@@ -1,7 +1,7 @@
 {
     "lock": {
         "wins": 3,
-        "losses": 4,
+        "losses": 5,
         "pushes": 0
     },
     "value": {
@@ -9,5 +9,5 @@
         "losses": 2,
         "pushes": 0
     },
-    "updated_date": "2026-02-12"
+    "updated_date": "2026-02-13"
 }
