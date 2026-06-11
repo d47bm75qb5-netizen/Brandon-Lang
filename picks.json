@@ -1,6 +1,6 @@
 {
-    "date": "2026-06-10",
-    "analysis": "AI Error: 400 API Key not found. Please pass a valid API key. [reason: \"API_KEY_INVALID\"\ndomain: \"googleapis.com\"\nmetadata {\n  key: \"service\"\n  value: \"generativelanguage.googleapis.com\"\n}\n, locale: \"en-US\"\nmessage: \"API Key not found. Please pass a valid API key.\"\n]",
-    "lock": "Error",
-    "value": "Error"
+    "date": "2026-06-11",
+    "analysis": "Error: No NBA games found for 2026-06-11.",
+    "lock": "N/A",
+    "value": "N/A"
 }
